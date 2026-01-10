@@ -1,0 +1,25 @@
+{
+  "name": "o-data",
+  "module": "src/index.ts",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./parser": "./src/parser/config.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "bin": {
+    "generate-schema": "bun src/parser"
+  },
+  "scripts": {
+    "generate-schema": "bun src/parser/index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.3.2"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
