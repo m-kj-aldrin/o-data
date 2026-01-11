@@ -2,28 +2,52 @@
 // Property Type System
 // ============================================================================
 
-export type Property = "key" | "string" | "number" | "boolean" | "date" | "datetimeoffset" | "time" | "guid" | "binary" | "decimal" | "duration" | "enum";
+export type Property = "key" | "string" | "number" | "boolean" | "date" | "datetimeoffset" | "time" | "guid" | "binary" | "decimal" | "duration" | "enum" | "complex";
 
-export type PropertyOptions = {
+export type CommonPropertyOptions = {
   readonly?: boolean;
   nullable?: boolean;
   collection?: boolean;
-  enum?: string;
 };
 
-export type PropertyDef = 
-  | Property 
-  | ({ type: Property } & PropertyOptions)
-  | { target: string; collection: boolean };
+export type EnumPropertyOptions<TEnum extends string = string> = CommonPropertyOptions & {
+  enum: TEnum;
+};
 
-export function property<T extends Property, O extends PropertyOptions | undefined = undefined>(
-  type: T,
-  options?: O
-): O extends undefined ? T : { type: T } & O {
-  if (!options || Object.keys(options).length === 0) {
-    return type as any;
+export type ComplexPropertyOptions<TTarget extends string = string> = CommonPropertyOptions & {
+  target: TTarget;
+};
+
+export type PropertyOptions = 
+  | CommonPropertyOptions
+  | EnumPropertyOptions
+  | ComplexPropertyOptions;
+
+export type PropertyDef = 
+  | ({ type: "enum" } & EnumPropertyOptions)
+  | ({ type: "complex" } & ComplexPropertyOptions)
+  | ({ type: Exclude<Property, "enum" | "complex"> } & CommonPropertyOptions);
+
+export function property<const TEnum extends string>(
+  type: "enum", 
+  options: EnumPropertyOptions<TEnum>
+): { type: "enum" } & EnumPropertyOptions<TEnum>;
+
+export function property<const TTarget extends string>(
+  type: "complex", 
+  options: ComplexPropertyOptions<TTarget>
+): { type: "complex" } & ComplexPropertyOptions<TTarget>;
+
+export function property<T extends Exclude<Property, "enum" | "complex">>(
+  type: T, 
+  options?: CommonPropertyOptions
+): { type: T } & CommonPropertyOptions;
+
+export function property(type: any, options: any) {
+  if (options) {
+    return { type, ...options };
   }
-  return { type, ...options } as any;
+  return { type };
 }
 
 // ============================================================================
@@ -344,26 +368,42 @@ export type FunctionKeysByScope<Functions, Scope> = {
 // ============================================================================
 
 export type PropertyTypeToTS<T, S extends { complexTypes?: Record<string, any> } = any> = 
-  T extends { target: infer Target, collection: true }
-  ? Target extends string
+  T extends { type: "complex", target: infer Target, collection: true }
+  ? Target extends string 
     ? Target extends keyof S["complexTypes"]
-      ? S["complexTypes"][Target] extends { properties: any }
-        ? Array<SelectedProperties<S["complexTypes"][Target], undefined, S>>
-        : any
+      ? Array<SelectedProperties<S["complexTypes"][Target], undefined, S>>
       : any
     : never
-  : T extends { target: infer Target }
+  : T extends { type: "complex", target: infer Target }
   ? Target extends string
     ? Target extends keyof S["complexTypes"]
-      ? S["complexTypes"][Target] extends { properties: any }
-        ? SelectedProperties<S["complexTypes"][Target], undefined, S>
-        : any
+      ? SelectedProperties<S["complexTypes"][Target], undefined, S>
       : any
     : never
+  : T extends { type: "enum", collection: true }
+  ? number[]
+  : T extends { type: "enum" }
+  ? number
   : T extends { type: infer U, collection: true }
-  ? Array<PropertyTypeToTS<U, S>>
+  ? U extends Property
+    ? Array<PropertyTypeToTS<{ type: U }, S>>
+    : never
   : T extends { type: infer U }
-  ? PropertyTypeToTS<U, S>
+  ? U extends "string"
+    ? string
+    : U extends "number"
+    ? number
+    : U extends "boolean"
+    ? boolean
+    : U extends "date" | "time" | "datetimeoffset"
+    ? Date | string
+    : U extends "key" | "guid" | "duration"
+    ? string
+    : U extends "binary"
+    ? ArrayBuffer | string
+    : U extends "decimal"
+    ? number | string
+    : never
   : T extends "string"
   ? string
   : T extends "number"
@@ -378,8 +418,6 @@ export type PropertyTypeToTS<T, S extends { complexTypes?: Record<string, any> }
   ? ArrayBuffer | string
   : T extends "decimal"
   ? number | string
-  : T extends "enum"
-  ? number
   : never;
 
 // ============================================================================
@@ -560,18 +598,24 @@ export type DeleteResponse = ODataResponse<DeleteResultData, DeleteResultError>;
 export type ActionResultData<S extends ResolvedSchema<any>, R extends ReturnTypeRef<any> | undefined> = {
   data: R extends undefined
     ? void
-    : R extends PropertyDef 
-    ? PropertyTypeToTS<R, S>
-    : R extends { target: infer T; collection: infer C }
-    ? T extends keyof S["entitysets"]
-      ? C extends true
-        ? Array<CollectedProperties<S["entitysets"][T], {}, S>>
-        : CollectedProperties<S["entitysets"][T], {}, S>
-      : T extends keyof S["complexTypes"]
-      ? C extends true
+    : R extends { type: "complex", target: infer T }
+    ? T extends keyof S["complexTypes"]
+      ? R extends { collection: true }
         ? Array<SelectedProperties<S["complexTypes"][T], undefined, S>>
         : SelectedProperties<S["complexTypes"][T], undefined, S>
       : any
+    : R extends { target: infer T }
+    ? T extends keyof S["entitysets"]
+      ? R extends { collection: true }
+        ? Array<CollectedProperties<S["entitysets"][T], {}, S>>
+        : CollectedProperties<S["entitysets"][T], {}, S>
+      : T extends keyof S["complexTypes"]
+      ? R extends { collection: true }
+        ? Array<SelectedProperties<S["complexTypes"][T], undefined, S>>
+        : SelectedProperties<S["complexTypes"][T], undefined, S>
+      : any
+    : R extends PropertyDef
+    ? PropertyTypeToTS<R, S>
     : void;
 } & ODataMetadata;
 
@@ -597,18 +641,24 @@ export type FunctionResponse<S extends ResolvedSchema<any>, R extends ReturnType
 export type ResolveReturnType<S extends ResolvedSchema<any>, R extends ReturnTypeRef<any> | undefined> = ODataResult<
   R extends undefined
   ? void
-  : R extends PropertyDef 
-  ? PropertyTypeToTS<R, S>
-  : R extends { target: infer T; collection: infer C }
-  ? T extends keyof S["entitysets"]
-    ? C extends true
-      ? Array<CollectedProperties<S["entitysets"][T], {}, S>>
-      : CollectedProperties<S["entitysets"][T], {}, S>
-    : T extends keyof S["complexTypes"]
-    ? C extends true
+  : R extends { type: "complex", target: infer T }
+  ? T extends keyof S["complexTypes"]
+    ? R extends { collection: true }
       ? Array<SelectedProperties<S["complexTypes"][T], undefined, S>>
       : SelectedProperties<S["complexTypes"][T], undefined, S>
     : any
+  : R extends { target: infer T }
+  ? T extends keyof S["entitysets"]
+    ? R extends { collection: true }
+      ? Array<CollectedProperties<S["entitysets"][T], {}, S>>
+      : CollectedProperties<S["entitysets"][T], {}, S>
+    : T extends keyof S["complexTypes"]
+    ? R extends { collection: true }
+      ? Array<SelectedProperties<S["complexTypes"][T], undefined, S>>
+      : SelectedProperties<S["complexTypes"][T], undefined, S>
+    : any
+  : R extends PropertyDef
+  ? PropertyTypeToTS<R, S>
   : void
 >;
 

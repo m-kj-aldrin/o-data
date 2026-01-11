@@ -881,7 +881,10 @@ function generateParameterLine(
     // CHECK FOR COMPLEX TYPE
     for (const ctFqn of includedComplexTypes) {
       if (ctFqn.endsWith(`.${shortName}`) || ctFqn === resolvedType) {
-        return `        "${pName}": { target: "${shortName}", collection: ${isCollection} },\n`;
+        if (isCollection) {
+          return `        "${pName}": property("complex", { target: "${shortName}", collection: true }),\n`;
+        }
+        return `        "${pName}": property("complex", { target: "${shortName}" }),\n`;
       }
     }
     
@@ -955,7 +958,10 @@ function generateReturnTypeCode(
   // CHECK FOR COMPLEX TYPE
   for (const ctFqn of includedComplexTypes) {
     if (ctFqn.endsWith(`.${shortName}`) || ctFqn === clean) {
-      return `{ target: "${shortName}", collection: ${isCollection} }`;
+      if (isCollection) {
+        return `property("complex", { target: "${shortName}", collection: true })`;
+      }
+      return `property("complex", { target: "${shortName}" })`;
     }
   }
 
