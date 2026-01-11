@@ -28,20 +28,20 @@ export type PropertyDef =
   | ({ type: "complex" } & ComplexPropertyOptions)
   | ({ type: Exclude<Property, "enum" | "complex"> } & CommonPropertyOptions);
 
-export function property<const TEnum extends string>(
+export function property<const TEnum extends string, const O extends EnumPropertyOptions<TEnum>>(
   type: "enum", 
-  options: EnumPropertyOptions<TEnum>
-): { type: "enum" } & EnumPropertyOptions<TEnum>;
+  options: O
+): { type: "enum" } & O;
 
-export function property<const TTarget extends string>(
+export function property<const TTarget extends string, const O extends ComplexPropertyOptions<TTarget>>(
   type: "complex", 
-  options: ComplexPropertyOptions<TTarget>
-): { type: "complex" } & ComplexPropertyOptions<TTarget>;
+  options: O
+): { type: "complex" } & O;
 
-export function property<T extends Exclude<Property, "enum" | "complex">>(
+export function property<T extends Exclude<Property, "enum" | "complex">, const O extends CommonPropertyOptions>(
   type: T, 
-  options?: CommonPropertyOptions
-): { type: T } & CommonPropertyOptions;
+  options?: O
+): { type: T } & O;
 
 export function property(type: any, options: any) {
   if (options) {
