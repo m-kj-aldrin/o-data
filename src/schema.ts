@@ -2,15 +2,19 @@
 // Property Type System
 // ============================================================================
 
-export type Property = "key" | "string" | "number" | "boolean" | "date" | "datetimeoffset" | "time" | "guid" | "binary" | "decimal" | "duration";
+export type Property = "key" | "string" | "number" | "boolean" | "date" | "datetimeoffset" | "time" | "guid" | "binary" | "decimal" | "duration" | "enum";
 
 export type PropertyOptions = {
   readonly?: boolean;
   nullable?: boolean;
   collection?: boolean;
+  enum?: string;
 };
 
-export type PropertyDef = Property | ({ type: Property } & PropertyOptions);
+export type PropertyDef = 
+  | Property 
+  | ({ type: Property } & PropertyOptions)
+  | { target: string; collection: boolean };
 
 export function property<T extends Property, O extends PropertyOptions | undefined = undefined>(
   type: T,
@@ -115,9 +119,13 @@ export type ComplexTypeDefinition = {
   properties: { [key: string]: PropertyDef };
 };
 
-export type SchemaDefinition<T extends { entitysets: Record<string, any>; complexTypes?: Record<string, any> }> = {
+export type SchemaDefinition<T extends { entitysets: Record<string, any>; complexTypes?: Record<string, any>; enumTypes?: Record<string, any> }> = {
   namespace: string;
   complexTypes?: Record<string, ComplexTypeDefinition>;
+  enumTypes?: Record<string, {
+    isFlags?: boolean;
+    members: Record<string, number>;
+  }>;
   entitysets: Record<
     string,
     {
@@ -179,6 +187,9 @@ export type ResolvedSchema<T extends SchemaDefinition<T>> = {
   readonly namespace: T["namespace"];
   readonly complexTypes: {
     readonly [K in keyof T["complexTypes"]]: T["complexTypes"][K];
+  };
+  readonly enumTypes: {
+    readonly [K in keyof T["enumTypes"]]: T["enumTypes"][K];
   };
   readonly entitysets: {
     readonly [K in keyof T["entitysets"]]: {
@@ -303,6 +314,7 @@ export function schema<const T extends SchemaDefinition<T>>(definition: T): Reso
   return {
     namespace: definition.namespace,
     complexTypes: definition.complexTypes || {},
+    enumTypes: definition.enumTypes || {},
     entitysets: resolvedEntitysets,
     actions: definition.actions || {},
     functions: definition.functions || {},
@@ -331,11 +343,27 @@ export type FunctionKeysByScope<Functions, Scope> = {
 // Property Type Mapper
 // ============================================================================
 
-export type PropertyTypeToTS<T> = 
-  T extends { type: infer U, collection: true }
-  ? Array<PropertyTypeToTS<U>>
+export type PropertyTypeToTS<T, S extends { complexTypes?: Record<string, any> } = any> = 
+  T extends { target: infer Target, collection: true }
+  ? Target extends string
+    ? Target extends keyof S["complexTypes"]
+      ? S["complexTypes"][Target] extends { properties: any }
+        ? Array<SelectedProperties<S["complexTypes"][Target], undefined, S>>
+        : any
+      : any
+    : never
+  : T extends { target: infer Target }
+  ? Target extends string
+    ? Target extends keyof S["complexTypes"]
+      ? S["complexTypes"][Target] extends { properties: any }
+        ? SelectedProperties<S["complexTypes"][Target], undefined, S>
+        : any
+      : any
+    : never
+  : T extends { type: infer U, collection: true }
+  ? Array<PropertyTypeToTS<U, S>>
   : T extends { type: infer U }
-  ? PropertyTypeToTS<U>
+  ? PropertyTypeToTS<U, S>
   : T extends "string"
   ? string
   : T extends "number"
@@ -350,6 +378,8 @@ export type PropertyTypeToTS<T> =
   ? ArrayBuffer | string
   : T extends "decimal"
   ? number | string
+  : T extends "enum"
+  ? number
   : never;
 
 // ============================================================================
@@ -385,10 +415,10 @@ export type CollectionQueryObject<E extends QueryableEntity> = BaseQueryObject<E
   count?: boolean;
 };
 
-export type SelectedProperties<E extends { properties: any }, S> = E["properties"] extends infer Props
+export type SelectedProperties<E extends { properties: any }, S, Schema extends { complexTypes?: Record<string, any> } = any> = E["properties"] extends infer Props
   ? S extends (keyof Props)[]
-    ? { [P in S[number]]: PropertyTypeToTS<Props[P]> }
-    : { [P in keyof Props]: PropertyTypeToTS<Props[P]> }
+    ? { [P in S[number]]: PropertyTypeToTS<Props[P], Schema> }
+    : { [P in keyof Props]: PropertyTypeToTS<Props[P], Schema> }
   : never;
 
 export type ExpandedProperties<E extends QueryableEntity, X> = X extends Record<string, any>
@@ -401,11 +431,11 @@ export type ExpandedProperties<E extends QueryableEntity, X> = X extends Record<
     }
   : {};
 
-export type CollectedProperties<E extends QueryableEntity, Q extends SingleQueryObject<E> | CollectionQueryObject<E>> = "select" extends keyof Q
+export type CollectedProperties<E extends QueryableEntity, Q extends SingleQueryObject<E> | CollectionQueryObject<E>, Schema extends { complexTypes?: Record<string, any> } = any> = "select" extends keyof Q
   ? Q["select"] extends readonly (keyof E["properties"])[]
-    ? SelectedProperties<E, Q["select"]> & ("expand" extends keyof Q ? ExpandedProperties<E, Q["expand"]> : {})
-    : { [P in keyof E["properties"]]: PropertyTypeToTS<E["properties"][P]> } & ("expand" extends keyof Q ? ExpandedProperties<E, Q["expand"]> : {})
-  : { [P in keyof E["properties"]]: PropertyTypeToTS<E["properties"][P]> } & ("expand" extends keyof Q ? ExpandedProperties<E, Q["expand"]> : {});
+    ? SelectedProperties<E, Q["select"], Schema> & ("expand" extends keyof Q ? ExpandedProperties<E, Q["expand"]> : {})
+    : { [P in keyof E["properties"]]: PropertyTypeToTS<E["properties"][P], Schema> } & ("expand" extends keyof Q ? ExpandedProperties<E, Q["expand"]> : {})
+  : { [P in keyof E["properties"]]: PropertyTypeToTS<E["properties"][P], Schema> } & ("expand" extends keyof Q ? ExpandedProperties<E, Q["expand"]> : {});
 
 export type QueryOperationOptions = {
   headers?: Record<string, string>;
@@ -531,16 +561,16 @@ export type ActionResultData<S extends ResolvedSchema<any>, R extends ReturnType
   data: R extends undefined
     ? void
     : R extends PropertyDef 
-    ? PropertyTypeToTS<R>
+    ? PropertyTypeToTS<R, S>
     : R extends { target: infer T; collection: infer C }
     ? T extends keyof S["entitysets"]
       ? C extends true
-        ? Array<CollectedProperties<S["entitysets"][T], {}>>
-        : CollectedProperties<S["entitysets"][T], {}>
+        ? Array<CollectedProperties<S["entitysets"][T], {}, S>>
+        : CollectedProperties<S["entitysets"][T], {}, S>
       : T extends keyof S["complexTypes"]
       ? C extends true
-        ? Array<SelectedProperties<S["complexTypes"][T], undefined>>
-        : SelectedProperties<S["complexTypes"][T], undefined>
+        ? Array<SelectedProperties<S["complexTypes"][T], undefined, S>>
+        : SelectedProperties<S["complexTypes"][T], undefined, S>
       : any
     : void;
 } & ODataMetadata;
@@ -568,16 +598,16 @@ export type ResolveReturnType<S extends ResolvedSchema<any>, R extends ReturnTyp
   R extends undefined
   ? void
   : R extends PropertyDef 
-  ? PropertyTypeToTS<R>
+  ? PropertyTypeToTS<R, S>
   : R extends { target: infer T; collection: infer C }
   ? T extends keyof S["entitysets"]
     ? C extends true
-      ? Array<CollectedProperties<S["entitysets"][T], {}>>
-      : CollectedProperties<S["entitysets"][T], {}>
+      ? Array<CollectedProperties<S["entitysets"][T], {}, S>>
+      : CollectedProperties<S["entitysets"][T], {}, S>
     : T extends keyof S["complexTypes"]
     ? C extends true
-      ? Array<SelectedProperties<S["complexTypes"][T], undefined>>
-      : SelectedProperties<S["complexTypes"][T], undefined>
+      ? Array<SelectedProperties<S["complexTypes"][T], undefined, S>>
+      : SelectedProperties<S["complexTypes"][T], undefined, S>
     : any
   : void
 >;
@@ -586,7 +616,7 @@ export type OperationParameterType<S extends ResolvedSchema<any>, P> = P extends
   ? T extends keyof S["entitysets"]
     ? CreateObject<S["entitysets"][T]>
     : any 
-  : PropertyTypeToTS<P>;
+  : PropertyTypeToTS<P, S>;
 
 export type OperationParameters<S extends ResolvedSchema<any>, Params> = {
   [K in keyof Params as IsNullable<Params[K]> extends true ? K : never]?: OperationParameterType<S, Params[K]>;

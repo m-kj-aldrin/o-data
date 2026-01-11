@@ -130,6 +130,12 @@ interface CsdlComplexType {
   Property?: CsdlProperty[];
 }
 
+interface CsdlEnumType {
+  '@_Name': string;
+  '@_IsFlags'?: string;
+  Member?: { '@_Name': string; '@_Value': string }[];
+}
+
 interface CsdlActionOrFunction {
   '@_Name': string;
   '@_IsBound'?: string;
@@ -148,7 +154,7 @@ interface CsdlSchema {
   '@_Alias'?: string;
   EntityType?: CsdlEntityType[];
   ComplexType?: CsdlComplexType[];
-  EnumType?: { '@_Name': string }[];
+  EnumType?: CsdlEnumType[];
   Action?: CsdlActionOrFunction[];
   Function?: CsdlActionOrFunction[];
   EntityContainer?: {
@@ -207,6 +213,7 @@ async function main() {
         'PropertyRef',
         'FunctionImport',
         'ActionImport',
+        'Member',
       ];
       return arrayTags.includes(name);
     },
@@ -261,7 +268,7 @@ async function main() {
   const setBaseTypeMap = new Map<string, string>(); // SetName -> ParentSetName
   const entityTypes = new Map<string, CsdlEntityType>(); // FQN -> EntityType Definition
   const complexTypes = new Map<string, CsdlComplexType>(); // FQN -> ComplexType Definition
-  const enumTypes = new Set<string>();
+  const enumTypes = new Map<string, CsdlEnumType>(); // FQN -> EnumType Definition
 
   for (const s of schemas) {
     const ns = s['@_Namespace'];
@@ -269,7 +276,10 @@ async function main() {
       for (const et of s.EntityType) entityTypes.set(`${ns}.${et['@_Name']}`, et);
     }
     if (s.EnumType) {
-      for (const et of s.EnumType) enumTypes.add(`${ns}.${et['@_Name']}`);
+      for (const et of s.EnumType) {
+        const fqn = `${ns}.${et['@_Name']}`;
+        enumTypes.set(fqn, et);
+      }
     }
     if (s.ComplexType) {
       for (const ct of s.ComplexType) complexTypes.set(`${ns}.${ct['@_Name']}`, ct);
@@ -333,9 +343,15 @@ async function main() {
   // --------------------------------------------------------------------------
   const includedSets = new Set<string>(WANTED_ENTITIES);
   const includedComplexTypes = new Set<string>();
+  const includedEnumTypes = new Set<string>();
 
   // Helpers for logic
-  const isPrimitive = (type: string) => type.startsWith('Edm.') || enumTypes.has(type);
+  const isPrimitive = (type: string) => {
+    if (type.startsWith('Edm.')) return true;
+    // Check if it's an enum type
+    const { name: resolvedType } = resolveType(type);
+    return enumTypes.has(resolvedType) || enumTypes.has(type);
+  };
   const isKnownSet = (type: string) => {
     const setName = typeToSetMap.get(type);
     return setName && includedSets.has(setName);
@@ -589,8 +605,34 @@ async function main() {
     out += `      properties: {\n`;
     for (const prop of props) {
       if (isExcluded(prop['@_Name'], 'properties')) continue;
-      out += generatePropertyLine(prop, typeToSetMap, includedSets, includedComplexTypes);
+      out += generatePropertyLine(prop, typeToSetMap, includedSets, includedComplexTypes, enumTypes, includedEnumTypes, resolveType);
     }
+    out += `      },\n`;
+    out += `    },\n`;
+  }
+  out += `  },\n`;
+
+  // --- Enum Types ---
+  out += `  enumTypes: {\n`;
+  for (const enumFqn of includedEnumTypes) {
+    const enumDef = enumTypes.get(enumFqn);
+    if (!enumDef) continue;
+    
+    const name = enumFqn.split('.').pop()!;
+    const isFlags = enumDef['@_IsFlags'] === 'true';
+    
+    out += `    "${name}": {\n`;
+    out += `      isFlags: ${isFlags},\n`;
+    out += `      members: {\n`;
+    
+    if (enumDef.Member) {
+      for (const member of enumDef.Member) {
+        const memberName = member['@_Name'];
+        const memberValue = member['@_Value'];
+        out += `        "${memberName}": ${memberValue},\n`;
+      }
+    }
+    
     out += `      },\n`;
     out += `    },\n`;
   }
@@ -625,6 +667,9 @@ async function main() {
             typeToSetMap,
             includedSets,
             includedComplexTypes,
+            enumTypes,
+            includedEnumTypes,
+            resolveType,
             entity.Key
           );
         }
@@ -652,14 +697,14 @@ async function main() {
       out += `      actions: {\n`;
       if (ops && ops.actions.length > 0) {
         for (const op of ops.actions)
-          out += generateOperationCode(op, typeToSetMap, includedSets, includedComplexTypes);
+          out += generateOperationCode(op, typeToSetMap, includedSets, includedComplexTypes, enumTypes, includedEnumTypes, resolveType);
       }
       out += `      },\n`;
 
       out += `      functions: {\n`;
       if (ops && ops.functions.length > 0) {
         for (const op of ops.functions)
-          out += generateOperationCode(op, typeToSetMap, includedSets, includedComplexTypes);
+          out += generateOperationCode(op, typeToSetMap, includedSets, includedComplexTypes, enumTypes, includedEnumTypes, resolveType);
       }
       out += `      },\n`;
 
@@ -673,7 +718,7 @@ async function main() {
   for (const op of rootActions) {
     const opFqn = `${namespace}.${op.def['@_Name']}`;
     const isImport = actionImports.has(opFqn);
-    out += generateOperationCode(op, typeToSetMap, includedSets, includedComplexTypes, true, isImport);
+    out += generateOperationCode(op, typeToSetMap, includedSets, includedComplexTypes, enumTypes, includedEnumTypes, resolveType, true, isImport);
   }
   out += `  },\n`;
 
@@ -682,7 +727,7 @@ async function main() {
   for (const op of rootFunctions) {
     const opFqn = `${namespace}.${op.def['@_Name']}`;
     const isImport = functionImports.has(opFqn);
-    out += generateOperationCode(op, typeToSetMap, includedSets, includedComplexTypes, true, isImport);
+    out += generateOperationCode(op, typeToSetMap, includedSets, includedComplexTypes, enumTypes, includedEnumTypes, resolveType, true, isImport);
   }
   out += `  },\n`;
 
@@ -707,6 +752,9 @@ function generateOperationCode(
   typeMap: Map<string, string>,
   validSets: Set<string>,
   includedComplexTypes: Set<string>,
+  enumTypesMap: Map<string, CsdlEnumType>,
+  includedEnumTypes: Set<string>,
+  resolveTypeFn: (rawType: string) => { name: string; isCollection: boolean; original: string },
   isRoot = false,
   isImport = false
 ): string {
@@ -726,7 +774,7 @@ function generateOperationCode(
     const startIndex = op.isBound ? 1 : 0;
     for (let i = startIndex; i < op.def.Parameter.length; i++) {
       const p = op.def.Parameter[i];
-      out += generateParameterLine(p, typeMap, validSets, includedComplexTypes);
+      out += generateParameterLine(p, typeMap, validSets, includedComplexTypes, enumTypesMap, includedEnumTypes, resolveTypeFn);
     }
   }
   out += `          },\n`;
@@ -736,7 +784,10 @@ function generateOperationCode(
       op.def.ReturnType['@_Type'],
       typeMap,
       validSets,
-      includedComplexTypes
+      includedComplexTypes,
+      enumTypesMap,
+      includedEnumTypes,
+      resolveTypeFn
     )},\n`;
   }
   out += `        },\n`;
@@ -748,6 +799,9 @@ function generatePropertyLine(
   typeMap: Map<string, string>,
   validSets: Set<string>,
   includedComplexTypes: Set<string>,
+  enumTypesMap: Map<string, CsdlEnumType>,
+  includedEnumTypes: Set<string>,
+  resolveTypeFn: (rawType: string) => { name: string; isCollection: boolean; original: string },
   key?: CsdlKey
 ): string {
   const propName = prop['@_Name'];
@@ -762,7 +816,7 @@ function generatePropertyLine(
   if (isKey) {
     return `        "${propName}": property("key", { readonly: true }),\n`;
   } else {
-    return generateParameterLine(prop, typeMap, validSets, includedComplexTypes);
+    return generateParameterLine(prop, typeMap, validSets, includedComplexTypes, enumTypesMap, includedEnumTypes, resolveTypeFn);
   }
 }
 
@@ -770,7 +824,10 @@ function generateParameterLine(
   p: any,
   typeMap: Map<string, string>,
   validSets: Set<string>,
-  includedComplexTypes: Set<string>
+  includedComplexTypes: Set<string>,
+  enumTypesMap: Map<string, CsdlEnumType>,
+  includedEnumTypes: Set<string>,
+  resolveTypeFn: (rawType: string) => { name: string; isCollection: boolean; original: string }
 ): string {
   const pName = p['@_Name'];
   const pType = p['@_Type'];
@@ -782,7 +839,27 @@ function generateParameterLine(
     clean = clean.match(/Collection\((.*?)\)/)?.[1] || clean;
   }
 
-  const typeStr = mapType(pType);
+  // Resolve alias and check for enum
+  const { name: resolvedType } = resolveTypeFn(clean);
+  const isEnum = enumTypesMap.has(resolvedType) || enumTypesMap.has(clean);
+  
+  if (isEnum) {
+    const shortName = clean.split('.').pop()!;
+    // Track this enum type
+    includedEnumTypes.add(resolvedType);
+    
+    const options: string[] = [];
+    if (isCollection) options.push('collection: true');
+    if (p['@_Nullable'] === 'false') options.push('nullable: false');
+    
+    if (options.length > 0) {
+      return `        "${pName}": property("enum", { enum: "${shortName}", ${options.join(', ')} }),\n`;
+    } else {
+      return `        "${pName}": property("enum", { enum: "${shortName}" }),\n`;
+    }
+  }
+
+  const typeStr = mapType(pType, enumTypesMap, resolveTypeFn);
   const options: string[] = [];
   if (isCollection) options.push('collection: true');
   if (p['@_Nullable'] === 'false') options.push('nullable: false');
@@ -800,6 +877,14 @@ function generateParameterLine(
     if (targetSet && validSets.has(targetSet)) {
       return `        "${pName}": { target: "${targetSet}", collection: ${isCollection} },\n`;
     }
+    
+    // CHECK FOR COMPLEX TYPE
+    for (const ctFqn of includedComplexTypes) {
+      if (ctFqn.endsWith(`.${shortName}`) || ctFqn === resolvedType) {
+        return `        "${pName}": { target: "${shortName}", collection: ${isCollection} },\n`;
+      }
+    }
+    
     return `        "${pName}": property("any" as any, { ${options.join(
       ', '
     )} }), // ${shortName}\n`;
@@ -816,7 +901,10 @@ function generateReturnTypeCode(
   type: string,
   typeMap: Map<string, string>,
   validSets: Set<string>,
-  includedComplexTypes: Set<string>
+  includedComplexTypes: Set<string>,
+  enumTypesMap: Map<string, CsdlEnumType>,
+  includedEnumTypes: Set<string>,
+  resolveTypeFn: (rawType: string) => { name: string; isCollection: boolean; original: string }
 ): string {
   let isCollection = false;
   let clean = type;
@@ -826,8 +914,22 @@ function generateReturnTypeCode(
     clean = clean.match(/Collection\((.*?)\)/)?.[1] || clean;
   }
 
+  // Check for enum type
+  const { name: resolvedType } = resolveTypeFn(clean);
+  const isEnum = enumTypesMap.has(resolvedType) || enumTypesMap.has(clean);
+  
+  if (isEnum) {
+    const shortName = clean.split('.').pop()!;
+    includedEnumTypes.add(resolvedType);
+    
+    if (isCollection) {
+      return `property("enum", { enum: "${shortName}", collection: true })`;
+    }
+    return `property("enum", { enum: "${shortName}" })`;
+  }
+
   if (clean.startsWith('Edm.')) {
-    const typeStr = mapType(clean);
+    const typeStr = mapType(clean, enumTypesMap, resolveTypeFn);
     const options: string[] = [];
     if (isCollection) options.push('collection: true');
 
@@ -860,12 +962,20 @@ function generateReturnTypeCode(
   return `property("any" as any, { collection: ${isCollection} }) /* ${shortName} */`;
 }
 
-function mapType(edmType: string): string {
+function mapType(edmType: string, enumTypesMap?: Map<string, CsdlEnumType>, resolveTypeFn?: (rawType: string) => { name: string; isCollection: boolean; original: string }): string {
   let type = edmType;
   if (type.startsWith('Collection(')) {
     type = type.match(/Collection\((.*?)\)/)?.[1] || type;
   }
   if (type.startsWith('Edm.')) type = type.substring(4);
+
+  // Check if it's an enum type
+  if (enumTypesMap && resolveTypeFn) {
+    const { name: resolvedType } = resolveTypeFn(type);
+    if (enumTypesMap.has(resolvedType) || enumTypesMap.has(type)) {
+      return 'enum';
+    }
+  }
 
   switch (type) {
     case 'String':
