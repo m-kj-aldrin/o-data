@@ -37,6 +37,7 @@ async function loadConfig(): Promise<{
   outputFile: string;
   wantedEntities: string[];
   wantedActions: string[];
+  wantedFunctions: string[];
   excludeFilters: NormalizedExcludeFilters;
 }> {
   const configPathArg = process.argv[2];
@@ -84,6 +85,7 @@ async function loadConfig(): Promise<{
       outputFile,
       wantedEntities: config.wantedEntities || [],
       wantedActions: config.wantedActions || [],
+      wantedFunctions: config.wantedFunctions || [],
       excludeFilters: normalizeExcludeFilters(config.excludeFilters),
     };
   } catch (error) {
@@ -97,6 +99,7 @@ let INPUT_FILE: string;
 let OUTPUT_FILE: string;
 let WANTED_ENTITIES: string[];
 let WANTED_ACTIONS: string[];
+let WANTED_FUNCTIONS: string[];
 let EXCLUDE_FILTERS: NormalizedExcludeFilters;
 
 // ----------------------------------------------------------------------------
@@ -186,6 +189,7 @@ async function main() {
   OUTPUT_FILE = config.outputFile;
   WANTED_ENTITIES = config.wantedEntities;
   WANTED_ACTIONS = config.wantedActions;
+  WANTED_FUNCTIONS = config.wantedFunctions;
   EXCLUDE_FILTERS = config.excludeFilters;
 
   if (!fs.existsSync(INPUT_FILE)) {
@@ -364,10 +368,10 @@ async function main() {
   // --------------------------------------------------------------------------
   const allOperations = [...(mainSchema.Action || []), ...(mainSchema.Function || [])];
 
-  // 1a. Hard dependencies from WANTED_ACTIONS
-  if (WANTED_ACTIONS.length > 0) {
+  // 1a. Hard dependencies from WANTED_ACTIONS and WANTED_FUNCTIONS
+  if (WANTED_ACTIONS.length > 0 || WANTED_FUNCTIONS.length > 0) {
     for (const op of allOperations) {
-      if (WANTED_ACTIONS.includes(op['@_Name'])) {
+      if (WANTED_ACTIONS.includes(op['@_Name']) || WANTED_FUNCTIONS.includes(op['@_Name'])) {
         const params = op.Parameter || [];
         if (op.ReturnType) params.push({ '@_Name': 'Return', '@_Type': op.ReturnType['@_Type'] });
 
@@ -419,7 +423,9 @@ async function main() {
   const processList = (list: CsdlActionOrFunction[], type: 'Action' | 'Function') => {
     for (const op of list) {
       const name = op['@_Name'];
-      const isExplicitlyWanted = WANTED_ACTIONS.includes(name);
+      const isExplicitlyWanted =
+        (type === 'Action' && WANTED_ACTIONS.includes(name)) ||
+        (type === 'Function' && WANTED_FUNCTIONS.includes(name));
       const isBound = op['@_IsBound'] === 'true';
       const category = type === 'Action' ? 'actions' : 'functions';
 

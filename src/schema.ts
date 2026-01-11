@@ -371,13 +371,17 @@ export type PropertyTypeToTS<T, S extends { complexTypes?: Record<string, any> }
   T extends { type: "complex", target: infer Target, collection: true }
   ? Target extends string 
     ? Target extends keyof S["complexTypes"]
-      ? Array<SelectedProperties<S["complexTypes"][Target], undefined, S>>
+      ? S["complexTypes"][Target] extends { properties: any }
+        ? Array<SelectedProperties<S["complexTypes"][Target], undefined, S>>
+        : any
       : any
     : never
   : T extends { type: "complex", target: infer Target }
   ? Target extends string
     ? Target extends keyof S["complexTypes"]
-      ? SelectedProperties<S["complexTypes"][Target], undefined, S>
+      ? S["complexTypes"][Target] extends { properties: any }
+        ? SelectedProperties<S["complexTypes"][Target], undefined, S>
+        : any
       : any
     : never
   : T extends { type: "enum", collection: true }
@@ -662,10 +666,27 @@ export type ResolveReturnType<S extends ResolvedSchema<any>, R extends ReturnTyp
   : void
 >;
 
-export type OperationParameterType<S extends ResolvedSchema<any>, P> = P extends { target: infer T }
-  ? T extends keyof S["entitysets"]
-    ? CreateObject<S["entitysets"][T]>
-    : any 
+export type ComplexTypeInput<E extends { properties: any }, S extends { complexTypes?: Record<string, any> } = any> = {
+  [K in keyof E["properties"] as IsReadonly<E["properties"][K]> extends true ? never : K]?: PropertyTypeToTS<PropertyBaseType<E["properties"][K]>, S>;
+};
+
+export type OperationParameterType<S extends ResolvedSchema<any>, P> = 
+  P extends { type: "complex", target: infer T }
+    ? T extends keyof S["entitysets"]
+      ? CreateObject<S["entitysets"][T]>
+      : T extends keyof S["complexTypes"]
+        ? S["complexTypes"][T] extends { properties: any }
+          ? ComplexTypeInput<S["complexTypes"][T], S>
+          : any
+        : any
+  : P extends { target: infer T }
+    ? T extends keyof S["entitysets"]
+      ? CreateObject<S["entitysets"][T]>
+      : T extends keyof S["complexTypes"]
+        ? S["complexTypes"][T] extends { properties: any }
+          ? ComplexTypeInput<S["complexTypes"][T], S>
+          : any
+        : any 
   : PropertyTypeToTS<P, S>;
 
 export type OperationParameters<S extends ResolvedSchema<any>, Params> = {

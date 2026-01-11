@@ -12,6 +12,7 @@ export interface ParserConfig {
   outputPath: string;
   wantedEntities?: string[];
   wantedActions?: string[];
+  wantedFunctions?: string[];
   excludeFilters?: ExcludeFilters;
 }
 
