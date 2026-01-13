@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { OdataClient } from 'o-data';
+import { OdataClient } from '../src/_OLD';
 import { microsoft_dynamics_crm_schema } from '../demo/schema/generated-o-data-schema';
 
 // Helper function to create a client with a mock transport that captures URLs
