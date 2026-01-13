@@ -65,7 +65,7 @@ function serializeExpandOptions<S extends Schema<S>>(
       const helpers = createFilterHelpers(navEntityDef, schema);
       const builder = collectionQuery.filter(helpers);
       const state = (builder as any).state;
-      const filterString = serializeFilter(state, 0, undefined, navEntityDef);
+      const filterString = serializeFilter(state, 0, undefined, navEntityDef, schema);
       nestedParams.push(`$filter=${encodeURIComponent(filterString)}`);
     }
   }
@@ -148,7 +148,7 @@ export function buildQueryString<S extends Schema<S>>(
         const helpers = createFilterHelpers(entityDef, schema);
         const builder = collectionQuery.filter(helpers);
         const state = (builder as any).state;
-        const filterString = serializeFilter(state, 0, undefined, entityDef);
+        const filterString = serializeFilter(state, 0, undefined, entityDef, schema);
         params.push(`$filter=${encodeURIComponent(filterString)}`);
       }
     }

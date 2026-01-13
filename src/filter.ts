@@ -270,11 +270,12 @@ export function createFilterHelpers<TEntity extends QueryableEntity, S extends S
 // Filter Serialization
 // ============================================================================
 
-export function serializeFilter(
+export function serializeFilter<S extends Schema<S> = Schema<any>>(
   filterState: any[],
   depth = 0,
   lambdaVar?: string,
-  entityDef?: QueryableEntity
+  entityDef?: QueryableEntity,
+  schema?: S
 ): string {
   if (filterState.length === 0) {
     return '';
@@ -301,7 +302,7 @@ export function serializeFilter(
         lambdaEntityDef = undefined;
       }
     }
-    const predicate = serializeFilter(lambda.predicate, depth + 1, varName, lambdaEntityDef);
+    const predicate = serializeFilter(lambda.predicate, depth + 1, varName, lambdaEntityDef, schema);
     return `${lambda.nav}/${lambda.op}(${varName}:${predicate})`;
   }
 
@@ -309,7 +310,7 @@ export function serializeFilter(
   if (filterState.length === 3 && typeof filterState[0] === 'string') {
     const [property, operator, value] = filterState;
     const qualifiedProperty = lambdaVar ? `${lambdaVar}/${property}` : property;
-    return serializeClause(qualifiedProperty, operator, value, entityDef, property);
+    return serializeClause(qualifiedProperty, operator, value, entityDef, property, schema);
   }
 
   // Handle logical operators
@@ -326,7 +327,8 @@ export function serializeFilter(
           Array.isArray(filterState[i]) ? filterState[i] : [filterState[i]],
           depth,
           lambdaVar,
-          entityDef
+          entityDef,
+          schema
         );
         result = `(${result}) ${operator} (${right})`;
       }
@@ -335,7 +337,8 @@ export function serializeFilter(
         Array.isArray(part) ? part : [part],
         depth,
         lambdaVar,
-        entityDef
+        entityDef,
+        schema
       );
       result = result ? `${result} ${partStr}` : partStr;
     }
@@ -345,14 +348,89 @@ export function serializeFilter(
   return result;
 }
 
-function serializeClause(
+// Helper function to resolve enum member name from numeric value
+function resolveEnumMemberName<S extends Schema<S>>(
+  schema: S,
+  enumTypeName: string,
+  value: number
+): string | undefined {
+  if (!schema.enumtypes) {
+    return undefined;
+  }
+  const enumType = schema.enumtypes[enumTypeName];
+  if (!enumType || !enumType.members) {
+    return undefined;
+  }
+  const entry = Object.entries(enumType.members).find(([_, val]) => val === value);
+  return entry ? entry[0] : undefined;
+}
+
+// Helper function to format enum value as FQN
+function formatEnumValue<S extends Schema<S>>(
+  schema: S | undefined,
+  enumTypeName: string,
+  memberName: string
+): string {
+  if (!schema || !schema.namespace) {
+    // Fallback to plain member name if schema/namespace not available
+    return `'${memberName}'`;
+  }
+  return `${schema.namespace}.${enumTypeName}'${memberName}'`;
+}
+
+function serializeClause<S extends Schema<S> = Schema<any>>(
   property: string,
   operator: ComparisonOperator,
   value: any,
   entityDef?: QueryableEntity,
-  originalProperty?: string
+  originalProperty?: string,
+  schema?: S
 ): string {
+  // Check if this is an enum property
+  const isEnumProperty = (): { isEnum: boolean; enumTypeName?: string } => {
+    if (!originalProperty || !entityDef || !entityDef.properties) {
+      return { isEnum: false };
+    }
+    const propDef = entityDef.properties[originalProperty as keyof typeof entityDef.properties];
+    if (propDef && typeof propDef === 'object' && 'type' in propDef && propDef.type === 'enum') {
+      const enumTypeName = (propDef as { target: string }).target;
+      return { isEnum: true, enumTypeName };
+    }
+    return { isEnum: false };
+  };
+
+  const enumInfo = isEnumProperty();
+
   const formatValue = (val: any): string => {
+    if (val === null || val === undefined) {
+      return 'null';
+    }
+
+    // Handle enum values
+    if (enumInfo.isEnum && enumInfo.enumTypeName && schema) {
+      let memberName: string;
+      if (typeof val === 'string') {
+        // Use string value as member name
+        memberName = val;
+      } else if (typeof val === 'number') {
+        // Look up member name from numeric value
+        const resolved = resolveEnumMemberName(schema, enumInfo.enumTypeName, val);
+        if (!resolved) {
+          // Fallback to number if member not found
+          return String(val);
+        }
+        memberName = resolved;
+      } else {
+        // Not a string or number, fall through to normal formatting
+        return formatValueNonEnum(val);
+      }
+      return formatEnumValue(schema, enumInfo.enumTypeName, memberName);
+    }
+
+    return formatValueNonEnum(val);
+  };
+
+  const formatValueNonEnum = (val: any): string => {
     if (val === null || val === undefined) {
       return 'null';
     }
