@@ -7,6 +7,43 @@ import type { CollectionQueryObject, SingleQueryObject, SingleExpandObject } fro
 import { createFilterHelpers, serializeFilter } from './filter';
 import { buildQueryableEntity } from './runtime';
 import type { Schema } from './schema';
+import type { CreateObject, UpdateObject, CreateOperationOptions, UpdateOperationOptions } from './operations';
+
+// ============================================================================
+// URL Path Normalization
+// ============================================================================
+
+/**
+ * Normalizes URL path segments by:
+ * - Removing trailing slashes from baseUrl (preserving protocol ://)
+ * - Removing leading slashes from path segments
+ * - Joining with single /
+ * - Normalizing multiple consecutive slashes (except protocol)
+ */
+export function normalizePath(baseUrl: string, ...paths: string[]): string {
+  // Remove trailing slashes from baseUrl, but preserve protocol ://
+  let normalized = baseUrl.replace(/([^:]\/)\/+$/, '$1');
+
+  // Process each path segment
+  for (const path of paths) {
+    if (!path) continue;
+
+    // Remove leading slashes from path segment
+    const cleanPath = path.replace(/^\/+/, '');
+    if (!cleanPath) continue;
+
+    // Ensure single / between baseUrl and path
+    if (normalized && !normalized.endsWith('/')) {
+      normalized += '/';
+    }
+    normalized += cleanPath;
+  }
+
+  // Normalize multiple consecutive slashes (except protocol ://)
+  normalized = normalized.replace(/([^:]\/)\/+/g, '$1');
+
+  return normalized;
+}
 
 // ============================================================================
 // Serialize Expand Options
@@ -161,4 +198,260 @@ export function buildQueryString<S extends Schema<S>>(
   // so filter and orderby are not serialized (they don't exist on the type)
   
   return params.length > 0 ? `?${params.join('&')}` : '';
+}
+
+// ============================================================================
+// Create/Update Object Transformation
+// ============================================================================
+
+/**
+ * Transform create object to handle navigation properties with @odata.bind format
+ */
+export function transformCreateObjectForBind<S extends Schema<S>>(
+  createObject: CreateObject<any>,
+  entityDef: QueryableEntity | undefined,
+  schema: S
+): any {
+  if (!entityDef || !entityDef.navigations) return createObject;
+  const transformed: any = {};
+  
+  for (const [key, value] of Object.entries(createObject)) {
+    // Check for batch reference first
+    if (typeof value === 'string' && value.startsWith('$')) {
+      transformed[`${key}@odata.bind`] = value;
+      continue;
+    }
+
+    const navDef = entityDef.navigations[key as keyof typeof entityDef.navigations];
+    if (navDef && navDef.targetEntitysetKey) {
+      const isCollection = navDef.collection === true;
+      
+      if (!isCollection) {
+        // Single-valued navigation
+        if (
+          Array.isArray(value) &&
+          value.length === 2 &&
+          typeof value[0] === 'string' &&
+          (typeof value[1] === 'string' || typeof value[1] === 'number')
+        ) {
+          // Explicit entityset format: [entityset, id]
+          const [set, id] = value as [string, string | number];
+          transformed[`${key}@odata.bind`] = `/${set}(${id})`;
+        } else if (typeof value === 'string' || typeof value === 'number') {
+          // Plain ID - resolve entityset from navigation
+          const target = Array.isArray(navDef.targetEntitysetKey)
+            ? navDef.targetEntitysetKey[0]
+            : navDef.targetEntitysetKey;
+          transformed[`${key}@odata.bind`] = `/${target}(${value})`;
+        } else if (typeof value === 'object' && value !== null) {
+          // Deep insert - recursive transformation
+          const targetEntitysetKey = Array.isArray(navDef.targetEntitysetKey)
+            ? navDef.targetEntitysetKey[0]
+            : navDef.targetEntitysetKey;
+          const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+          transformed[key] = transformCreateObjectForBind(value, targetEntity, schema);
+        } else {
+          transformed[key] = value;
+        }
+      } else {
+        // Collection navigation
+        if (Array.isArray(value)) {
+          if (value.length > 0 && (typeof value[0] === 'string' || typeof value[0] === 'number')) {
+            // Array of string/number IDs (or batch references)
+            const target = Array.isArray(navDef.targetEntitysetKey)
+              ? navDef.targetEntitysetKey[0]
+              : navDef.targetEntitysetKey;
+            transformed[`${key}@odata.bind`] = (value as (string | number)[]).map((v: string | number) =>
+              typeof v === 'string' && v.startsWith('$') ? v : `/${target}(${v})`
+            );
+          } else if (value.length > 0 && Array.isArray(value[0])) {
+            // Array of [entityset, id] tuples
+            transformed[`${key}@odata.bind`] = (value as [string, string | number][]).map(
+              ([set, id]) => `/${set}(${id})`
+            );
+          } else {
+            // Array of objects - deep insert (recursive)
+            const targetEntitysetKey = Array.isArray(navDef.targetEntitysetKey)
+              ? navDef.targetEntitysetKey[0]
+              : navDef.targetEntitysetKey;
+            const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+            transformed[key] = (value as any[]).map((item: any) =>
+              typeof item === 'object' && item !== null
+                ? transformCreateObjectForBind(item, targetEntity, schema)
+                : item
+            );
+          }
+        } else {
+          transformed[key] = value;
+        }
+      }
+    } else {
+      transformed[key] = value;
+    }
+  }
+  
+  return transformed;
+}
+
+/**
+ * Transform update object to handle navigation properties with @odata.bind format
+ */
+export function transformUpdateObjectForBind<S extends Schema<S>>(
+  updateObject: UpdateObject<any>,
+  entityDef: QueryableEntity | undefined,
+  schema: S
+): any {
+  if (!entityDef || !entityDef.navigations) return updateObject;
+  const transformed: any = {};
+  
+  for (const [key, value] of Object.entries(updateObject)) {
+    // Check for batch reference first
+    if (typeof value === 'string' && value.startsWith('$')) {
+      transformed[`${key}@odata.bind`] = value;
+      continue;
+    }
+
+    const navDef = entityDef.navigations[key as keyof typeof entityDef.navigations];
+    if (navDef && navDef.targetEntitysetKey) {
+      if (value === null) {
+        // Set navigation to null
+        transformed[key] = null;
+      } else if (Array.isArray(value) && !navDef.collection && value.length === 2) {
+        // Single-valued navigation with explicit entityset: [entityset, id]
+        const [set, id] = value as [string, string | number];
+        transformed[`${key}@odata.bind`] = `/${set}(${id})`;
+      } else if ((typeof value === 'string' || typeof value === 'number') && !navDef.collection) {
+        // Single-valued navigation with plain ID
+        const target = Array.isArray(navDef.targetEntitysetKey)
+          ? navDef.targetEntitysetKey[0]
+          : navDef.targetEntitysetKey;
+        transformed[`${key}@odata.bind`] = `/${target}(${value})`;
+      } else if (typeof value === 'object' && value !== null) {
+        // Check if it's a collection operation spec
+        const spec = value as { replace?: any[]; add?: any[]; remove?: any[] };
+        if (spec.replace || spec.add || spec.remove) {
+          // Collection operation
+          const transformedSpec: any = {};
+          const targetEntitysetKey = Array.isArray(navDef.targetEntitysetKey)
+            ? navDef.targetEntitysetKey[0]
+            : navDef.targetEntitysetKey;
+          
+          const formatRef = (v: string | number | [string, string | number]) => {
+            // Check for batch reference
+            if (typeof v === 'string' && v.startsWith('$')) return v;
+            // Explicit entityset format
+            if (Array.isArray(v)) return `/${v[0]}(${v[1]})`;
+            // Use resolved entityset
+            return `/${targetEntitysetKey}(${v})`;
+          };
+          
+          if (spec.replace && Array.isArray(spec.replace)) {
+            transformedSpec.replace = spec.replace.map(formatRef);
+          }
+          if (spec.add && Array.isArray(spec.add)) {
+            transformedSpec.add = spec.add.map(formatRef);
+          }
+          if (spec.remove && Array.isArray(spec.remove)) {
+            transformedSpec.remove = spec.remove.map(formatRef);
+          }
+          transformed[key] = transformedSpec;
+        } else {
+          // Regular object - pass through (not a navigation operation)
+          transformed[key] = value;
+        }
+      } else {
+        transformed[key] = value;
+      }
+    } else {
+      transformed[key] = value;
+    }
+  }
+  
+  return transformed;
+}
+
+// ============================================================================
+// Build Create/Update Requests
+// ============================================================================
+
+/**
+ * Build HTTP Request for create operation
+ */
+export function buildCreateRequest<S extends Schema<S>>(
+  path: string,
+  createObject: CreateObject<any>,
+  options: CreateOperationOptions<any> | undefined,
+  baseUrl: string,
+  entityDef: QueryableEntity,
+  schema: S
+): Request {
+  let url = normalizePath(baseUrl, path);
+  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'application/json' });
+  const select = options?.select;
+  const preferParts: string[] = [];
+  
+  if (
+    options?.prefer?.return_representation === true ||
+    (select && Array.isArray(select) && select.length > 0)
+  ) {
+    preferParts.push('return=representation');
+  }
+  
+  if (preferParts.length > 0) {
+    headers.set('Prefer', preferParts.join(','));
+  }
+  
+  if (options?.headers) {
+    for (const [key, value] of Object.entries(options.headers)) {
+      headers.set(key, value);
+    }
+  }
+  
+  if (select && Array.isArray(select) && select.length > 0) {
+    url += `?$select=${select.join(',')}`;
+  }
+  
+  const transformedObject = transformCreateObjectForBind(createObject, entityDef, schema);
+  return new Request(url, { method: 'POST', headers, body: JSON.stringify(transformedObject) });
+}
+
+/**
+ * Build HTTP Request for update operation
+ */
+export function buildUpdateRequest<S extends Schema<S>>(
+  path: string,
+  updateObject: UpdateObject<any>,
+  options: UpdateOperationOptions<any> | undefined,
+  baseUrl: string,
+  entityDef: QueryableEntity,
+  schema: S
+): Request {
+  let url = normalizePath(baseUrl, path);
+  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'application/json' });
+  const select = options?.select;
+  const preferParts: string[] = [];
+  
+  if (
+    options?.prefer?.return_representation === true ||
+    (select && Array.isArray(select) && select.length > 0)
+  ) {
+    preferParts.push('return=representation');
+  }
+  
+  if (preferParts.length > 0) {
+    headers.set('Prefer', preferParts.join(','));
+  }
+  
+  if (options?.headers) {
+    for (const [key, value] of Object.entries(options.headers)) {
+      headers.set(key, value);
+    }
+  }
+  
+  if (select && Array.isArray(select) && select.length > 0) {
+    url += `?$select=${select.join(',')}`;
+  }
+  
+  const transformedObject = transformUpdateObjectForBind(updateObject, entityDef, schema);
+  return new Request(url, { method: 'PATCH', headers, body: JSON.stringify(transformedObject) });
 }

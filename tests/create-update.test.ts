@@ -14,7 +14,7 @@ const mockTransport = async (req: Request, init?: RequestInit) => {
   // Clone the request to capture it (since body is a stream)
   const clonedReq = req.clone();
   capturedRequests.push(clonedReq);
-  
+
   // Return appropriate status codes
   const method = req.method;
   const status = method === 'POST' ? 201 : method === 'PATCH' ? 204 : 200;
@@ -88,7 +88,15 @@ function getRequestUrl(req: Request): string {
  */
 function getRequestPath(req: Request): string {
   const url = new URL(req.url);
-  return url.pathname;
+  // Remove the base URL path to get just the entityset path
+  // Base URL is 'https://demo.com/api/data/v9.0/'
+  // So we need to extract everything after '/api/data/v9.0'
+  const pathname = url.pathname;
+  const basePath = '/api/data/v9.0';
+  if (pathname.startsWith(basePath)) {
+    return pathname.slice(basePath.length);
+  }
+  return pathname;
 }
 
 /**
@@ -120,7 +128,7 @@ test('create - simple create (no navigation)', async () => {
   const req = capturedRequests[0]!;
   expect(getRequestMethod(req)).toBe('POST');
   expect(getRequestPath(req)).toBe('/incidents');
-  
+
   const body = await getRequestBody(req);
   expect(body.title).toBe('Test Incident');
   expect(body.description).toBe('Test description');
@@ -137,7 +145,7 @@ test('create - single-valued navigation bind (string ID)', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expectBind(body, 'incident_contact', '/contacts(guid-123)');
   expect(body.title).toBe('Test');
 });
@@ -151,7 +159,7 @@ test('create - single-valued navigation bind (numeric ID)', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expectBind(body, 'incident_contact', '/contacts(42)');
 });
 
@@ -164,7 +172,7 @@ test('create - single-valued navigation bind (explicit entityset)', async () => 
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expectBind(body, 'incident_contact', '/contacts(guid-123)');
 });
 
@@ -177,7 +185,7 @@ test('create - collection navigation bind (array of string IDs)', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expectBind(body, 'contact_incidents', ['/incidents(guid-1)', '/incidents(guid-2)']);
 });
 
@@ -190,20 +198,23 @@ test('create - collection navigation bind (array of numeric IDs)', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expectBind(body, 'contact_incidents', ['/incidents(1)', '/incidents(2)']);
 });
 
 test('create - collection navigation bind (explicit entitysets)', async () => {
   await client.entitysets('contacts').create({
     name: 'John',
-    contact_incidents: [['incidents', 'guid-1'], ['incidents', 'guid-2']],
+    contact_incidents: [
+      ['incidents', 'guid-1'],
+      ['incidents', 'guid-2'],
+    ],
   });
 
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expectBind(body, 'contact_incidents', ['/incidents(guid-1)', '/incidents(guid-2)']);
 });
 
@@ -216,7 +227,7 @@ test('create - batch reference (single-valued)', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expectBind(body, 'incident_contact', '$1');
 });
 
@@ -229,7 +240,7 @@ test('create - batch reference (collection)', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expectBind(body, 'contact_incidents', ['$1', '$2']);
 });
 
@@ -245,7 +256,7 @@ test('create - deep insert (single-valued navigation)', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expectDeepInsert(body, 'incident_contact', {
     name: 'John',
     email: 'john@example.com',
@@ -264,7 +275,7 @@ test('create - deep insert with nested navigation bind', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expect(body.incident_contact).toBeDefined();
   expect(body.incident_contact.name).toBe('John');
   expectBind(body.incident_contact, 'contact_incidents', ['/incidents(guid-1)']);
@@ -284,7 +295,7 @@ test('create - deep insert with nested deep insert', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expect(body.contact_incidents).toBeDefined();
   expect(Array.isArray(body.contact_incidents)).toBe(true);
   expect(body.contact_incidents.length).toBe(1);
@@ -303,7 +314,7 @@ test('create - mixed scenario', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expect(body.title).toBe('Test');
   expect(body.description).toBe('Description');
   expect(body.status).toBe('Active');
@@ -324,7 +335,7 @@ test('create - with options (select)', async () => {
   const req = capturedRequests[0]!;
   const queryString = getQueryString(req);
   expect(queryString).toContain('$select=title,description');
-  
+
   const preferHeader = getHeader(req, 'Prefer');
   expect(preferHeader).toContain('return=representation');
 });
@@ -360,7 +371,7 @@ test('update - simple update (no navigation)', async () => {
   const req = capturedRequests[0]!;
   expect(getRequestMethod(req)).toBe('PATCH');
   expect(getRequestPath(req)).toBe('/incidents(guid-123)');
-  
+
   const body = await getRequestBody(req);
   expect(body.title).toBe('Updated Title');
 });
@@ -373,7 +384,7 @@ test('update - single-valued navigation bind', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expectBind(body, 'incident_contact', '/contacts(guid-456)');
 });
 
@@ -385,85 +396,108 @@ test('update - set navigation to null', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expect(body.incident_contact).toBeNull();
   expect(body['incident_contact@odata.bind']).toBeUndefined();
 });
 
 test('update - collection navigation replace', async () => {
-  await client.entitysets('contacts').key('guid-123').update({
-    contact_incidents: { replace: ['guid-1', 'guid-2'] },
-  });
+  await client
+    .entitysets('contacts')
+    .key('guid-123')
+    .update({
+      contact_incidents: { replace: ['guid-1', 'guid-2'] },
+    });
 
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expect(body.contact_incidents).toBeDefined();
   expect(body.contact_incidents.replace).toEqual(['/incidents(guid-1)', '/incidents(guid-2)']);
 });
 
 test('update - collection navigation add', async () => {
-  await client.entitysets('contacts').key('guid-123').update({
-    contact_incidents: { add: ['guid-3'] },
-  });
+  await client
+    .entitysets('contacts')
+    .key('guid-123')
+    .update({
+      contact_incidents: { add: ['guid-3'] },
+    });
 
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expect(body.contact_incidents).toBeDefined();
   expect(body.contact_incidents.add).toEqual(['/incidents(guid-3)']);
 });
 
 test('update - collection navigation remove', async () => {
-  await client.entitysets('contacts').key('guid-123').update({
-    contact_incidents: { remove: ['guid-1'] },
-  });
+  await client
+    .entitysets('contacts')
+    .key('guid-123')
+    .update({
+      contact_incidents: { remove: ['guid-1'] },
+    });
 
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expect(body.contact_incidents).toBeDefined();
   expect(body.contact_incidents.remove).toEqual(['/incidents(guid-1)']);
 });
 
 test('update - collection navigation replace with explicit entitysets', async () => {
-  await client.entitysets('contacts').key('guid-123').update({
-    contact_incidents: { replace: [['incidents', 'guid-1'], ['incidents', 'guid-2']] },
-  });
+  await client
+    .entitysets('contacts')
+    .key('guid-123')
+    .update({
+      contact_incidents: {
+        replace: [
+          ['incidents', 'guid-1'],
+          ['incidents', 'guid-2'],
+        ],
+      },
+    });
 
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expect(body.contact_incidents).toBeDefined();
   expect(body.contact_incidents.replace).toEqual(['/incidents(guid-1)', '/incidents(guid-2)']);
 });
 
 test('update - collection navigation operations with batch references', async () => {
-  await client.entitysets('contacts').key('guid-123').update({
-    contact_incidents: { add: ['$1', '$2'] },
-  });
+  await client
+    .entitysets('contacts')
+    .key('guid-123')
+    .update({
+      contact_incidents: { add: ['$1', '$2'] },
+    });
 
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   expect(body.contact_incidents).toBeDefined();
   expect(body.contact_incidents.add).toEqual(['$1', '$2']);
 });
 
 test('update - with options (select)', async () => {
-  await client.entitysets('incidents').key('guid-123').update(
-    {
-      title: 'Updated',
-    },
-    {
-      select: ['title'],
-    }
-  );
+  await client
+    .entitysets('incidents')
+    .key('guid-123')
+    .update(
+      {
+        title: 'Updated',
+      },
+      {
+        select: ['title'],
+      }
+    );
 
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
@@ -472,16 +506,19 @@ test('update - with options (select)', async () => {
 });
 
 test('update - with options (prefer return representation)', async () => {
-  await client.entitysets('incidents').key('guid-123').update(
-    {
-      title: 'Updated',
-    },
-    {
-      prefer: {
-        return_representation: true,
+  await client
+    .entitysets('incidents')
+    .key('guid-123')
+    .update(
+      {
+        title: 'Updated',
       },
-    }
-  );
+      {
+        prefer: {
+          return_representation: true,
+        },
+      }
+    );
 
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
@@ -502,7 +539,7 @@ test('create - empty array for collection navigation', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   // Empty array should be handled gracefully
   expect(body.contact_incidents).toBeDefined();
   expect(Array.isArray(body.contact_incidents)).toBe(true);
@@ -518,7 +555,7 @@ test('create - invalid navigation property', async () => {
   expect(capturedRequests.length).toBe(1);
   const req = capturedRequests[0]!;
   const body = await getRequestBody(req);
-  
+
   // Non-existent navigation should pass through unchanged
   expect(body.non_existent_nav).toBe('value');
   expect(body['non_existent_nav@odata.bind']).toBeUndefined();

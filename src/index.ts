@@ -23,7 +23,7 @@ import type {
   SingleQueryObject,
   QueryOperationOptions,
 } from './query';
-import { buildQueryString } from './serialization';
+import { buildQueryString, buildCreateRequest, buildUpdateRequest } from './serialization';
 import type {
   CreateObject,
   UpdateObject,
@@ -156,8 +156,24 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity> {
     c: CreateObject<QE>,
     o?: O
   ): Promise<CreateResponse<QE, O>> {
-    // TODO: Implement create execution
-    throw new Error('Not implemented');
+    const request = buildCreateRequest(
+      this.#path,
+      c,
+      o,
+      this.#options.baseUrl,
+      this.#entityset,
+      this.#schema
+    );
+    const response = await this.#options.transport(request);
+    const data = await response.json();
+    
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      result: data,
+    } as CreateResponse<QE, O>;
   }
 
   /**
@@ -251,8 +267,24 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity> {
     u: UpdateObject<QE>,
     o?: O
   ): Promise<UpdateResponse<QE, O>> {
-    // TODO: Implement update execution
-    throw new Error('Not implemented');
+    const request = buildUpdateRequest(
+      this.#path,
+      u,
+      o,
+      this.#options.baseUrl,
+      this.#entityset,
+      this.#schema
+    );
+    const response = await this.#options.transport(request);
+    const data = await response.json();
+    
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      result: data,
+    } as UpdateResponse<QE, O>;
   }
 
   /**
