@@ -37,10 +37,10 @@ export const coop_crm_schema = schema({
       },
     },
     Contact: {
-      id: { type: 'Edm.Guid', nullable: true },
-      name: { type: 'Edm.String', nullable: false },
-      email: { type: 'Edm.String', nullable: false },
-      phone: { type: 'Edm.String', nullable: true },
+      id: { type: 'Edm.Guid' },
+      name: { type: 'Edm.String' },
+      email: { type: 'Edm.String' },
+      phone: { type: 'Edm.String' },
       contact_incidents: {
         type: 'navigation',
         target: 'Incident',

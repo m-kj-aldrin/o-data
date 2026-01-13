@@ -135,34 +135,40 @@ type ODataTypeToTS<
 > = T extends { collection: true }
   ? T extends { type: 'enum'; target: infer Target }
     ? Target extends string
-      ? Array<T extends { nullable?: true } | { nullable?: undefined } ? EnumToTS<Target, S> | null : EnumToTS<Target, S>>
+      ? Array<'nullable' extends keyof T ? (T['nullable'] extends false ? EnumToTS<Target, S> : EnumToTS<Target, S> | null) : EnumToTS<Target, S> | null>
       : never
     : T extends { type: 'complex'; target: infer Target }
       ? Target extends string
-        ? Array<T extends { nullable?: true } | { nullable?: undefined } ? ComplexTypeToTS<Target, S, Visited> | null : ComplexTypeToTS<Target, S, Visited>>
+        ? Array<'nullable' extends keyof T ? (T['nullable'] extends false ? ComplexTypeToTS<Target, S, Visited> : ComplexTypeToTS<Target, S, Visited> | null) : ComplexTypeToTS<Target, S, Visited> | null>
         : never
       : T extends { type: infer P }
         ? P extends PrimitiveName
-          ? Array<T extends { nullable?: true } | { nullable?: undefined } ? PrimitiveToTS<P> | null : PrimitiveToTS<P>>
+          ? Array<'nullable' extends keyof T ? (T['nullable'] extends false ? PrimitiveToTS<P> : PrimitiveToTS<P> | null) : PrimitiveToTS<P> | null>
           : never
         : never
   : T extends { type: 'enum'; target: infer Target }
     ? Target extends string
-      ? (T extends { nullable?: true } | { nullable?: undefined }
-          ? EnumToTS<Target, S> | null
-          : EnumToTS<Target, S>)
+      ? ('nullable' extends keyof T
+          ? (T['nullable'] extends false
+              ? EnumToTS<Target, S>
+              : EnumToTS<Target, S> | null)
+          : EnumToTS<Target, S> | null)
       : never
     : T extends { type: 'complex'; target: infer Target }
       ? Target extends string
-        ? (T extends { nullable?: true } | { nullable?: undefined }
-            ? ComplexTypeToTS<Target, S, Visited> | null
-            : ComplexTypeToTS<Target, S, Visited>)
+        ? ('nullable' extends keyof T
+            ? (T['nullable'] extends false
+                ? ComplexTypeToTS<Target, S, Visited>
+                : ComplexTypeToTS<Target, S, Visited> | null)
+            : ComplexTypeToTS<Target, S, Visited> | null)
         : never
       : T extends { type: infer P }
         ? P extends PrimitiveName
-          ? (T extends { nullable?: true } | { nullable?: undefined }
-              ? PrimitiveToTS<P> | null
-              : PrimitiveToTS<P>)
+          ? ('nullable' extends keyof T
+              ? (T['nullable'] extends false
+                  ? PrimitiveToTS<P>
+                  : PrimitiveToTS<P> | null)
+              : PrimitiveToTS<P> | null)
           : never
         : never;
 
