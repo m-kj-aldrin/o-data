@@ -138,7 +138,6 @@ test('create - simple create (no navigation)', async () => {
 
 test('create - single-valued navigation bind (string ID)', async () => {
   await client.entitysets('incidents').create({
-    title: 'Test',
     incident_contact: 'guid-123',
   });
 
