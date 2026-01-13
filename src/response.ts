@@ -34,14 +34,72 @@ export type ODataError = { error: any };
 // Query Response Types
 // ============================================================================
 
-// Collection query result data (will be properly typed in query.ts)
-export type CollectionQueryData<E = any, Q = any, O = any> = {
-  data: any[];
-} & ODataMetadata;
+import type { QueryableEntity, EntitySetToQueryableEntity } from './types';
+import type { Schema } from './schema';
+import type { CollectionQueryObject, SingleQueryObject } from './query';
+
+// Helper to resolve navigation target QueryableEntity from targetEntitysetKey (same as in query.ts)
+type ResolveNavigationTarget<
+  S extends Schema<S>,
+  TargetKey extends string | string[]
+> = TargetKey extends string
+  ? TargetKey extends keyof S['entitysets']
+    ? EntitySetToQueryableEntity<S, TargetKey>
+    : QueryableEntity
+  : QueryableEntity;
+
+// Extract select keys as union type from query object
+type ExtractSelectKeys<
+  E extends QueryableEntity,
+  Q extends { select?: readonly (keyof E['properties'])[] }
+> = Q['select'] extends readonly (keyof E['properties'])[]
+  ? Q['select'][number]
+  : keyof E['properties']; // If no select, return all property keys
+
+// Extract expand result shape recursively
+// Use target directly (like old implementation) - it's now resolved at type level
+type ExtractExpandShape<
+  E extends QueryableEntity,
+  Q extends { expand?: Record<string, any> },
+  S extends Schema<S> = Schema<any>
+> = Q['expand'] extends Record<string, any>
+  ? {
+      [K in keyof Q['expand'] & keyof E['navigations']]: 
+        Q['expand'][K] extends SingleQueryObject<E['navigations'][K]['target']> | CollectionQueryObject<E['navigations'][K]['target']>
+          ? E['navigations'][K]['collection'] extends true
+            ? Array<ExtractQueryResultShape<E['navigations'][K]['target'], Q['expand'][K], S>>
+            : ExtractQueryResultShape<E['navigations'][K]['target'], Q['expand'][K], S>
+          : never;
+    }
+  : {};
+
+// Extract the result shape from a query object
+type ExtractQueryResultShape<
+  E extends QueryableEntity,
+  Q extends { select?: readonly (keyof E['properties'])[]; expand?: Record<string, any> },
+  S extends Schema<S> = Schema<any>
+> = Pick<E['properties'], ExtractSelectKeys<E, Q>> & ExtractExpandShape<E, Q, S>;
+
+// Collection query result data
+export type CollectionQueryData<
+  E extends QueryableEntity = any,
+  Q extends CollectionQueryObject<E, any> = any,
+  O = any
+> = Q extends CollectionQueryObject<E, infer S>
+  ? {
+      data: ExtractQueryResultShape<E, Q, S>[];
+    } & ODataMetadata
+  : {
+      data: any[];
+    } & ODataMetadata;
 
 export type CollectionQueryError = ODataError;
 
-export type CollectionQueryResponse<E = any, Q = any, O = any> = ODataResponse<
+export type CollectionQueryResponse<
+  E extends QueryableEntity = any,
+  Q extends CollectionQueryObject<E, any> = any,
+  O = any
+> = ODataResponse<
   CollectionQueryData<E, Q, O>,
   CollectionQueryError
 > & {
@@ -50,13 +108,24 @@ export type CollectionQueryResponse<E = any, Q = any, O = any> = ODataResponse<
 };
 
 // Single query result data
-export type SingleQueryData<E = any, Q = any> = {
-  data: any;
-} & ODataMetadata;
+export type SingleQueryData<
+  E extends QueryableEntity = any,
+  Q extends SingleQueryObject<E, any> = any
+> = Q extends SingleQueryObject<E, infer S>
+  ? {
+      data: ExtractQueryResultShape<E, Q, S>;
+    } & ODataMetadata
+  : {
+      data: any;
+    } & ODataMetadata;
 
 export type SingleQueryError = ODataError;
 
-export type SingleQueryResponse<E = any, Q = any, O = any> = ODataResponse<
+export type SingleQueryResponse<
+  E extends QueryableEntity = any,
+  Q extends SingleQueryObject<E> = any,
+  O = any
+> = ODataResponse<
   SingleQueryData<E, Q>,
   SingleQueryError
 >;
@@ -65,13 +134,37 @@ export type SingleQueryResponse<E = any, Q = any, O = any> = ODataResponse<
 // Create Response Types
 // ============================================================================
 
-export type CreateResultData<QE = any, O = any> =
-  | ({ data: any } & ODataMetadata)
-  | { data: undefined };
+// Extract select keys as union type from options tuple (for create/update)
+type ExtractSelectKeysForOperation<
+  QE extends { properties: Record<string, any> },
+  Select extends readonly (keyof QE['properties'])[]
+> = Select[number];
+
+// Determine data type based on options
+type CreateDataShape<
+  QE extends QueryableEntity,
+  O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } }
+> = O['prefer'] extends { return_representation: true }
+  ? QE['properties'] // Return all properties when return_representation is true
+  : O['select'] extends readonly (keyof QE['properties'])[]
+  ? Pick<QE['properties'], ExtractSelectKeysForOperation<QE, O['select']>> // Return selected properties
+  : undefined; // No data returned when no select and no return_representation
+
+export type CreateResultData<
+  QE extends QueryableEntity = any,
+  O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } } = any
+> = O['prefer'] extends { return_representation: true }
+  ? ({ data: CreateDataShape<QE, O> } & ODataMetadata)
+  : O['select'] extends readonly (keyof QE['properties'])[]
+  ? ({ data: CreateDataShape<QE, O> } & ODataMetadata)
+  : { data: undefined };
 
 export type CreateResultError = ODataError;
 
-export type CreateResponse<QE = any, O = any> = ODataResponse<
+export type CreateResponse<
+  QE extends QueryableEntity = any,
+  O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } } = any
+> = ODataResponse<
   CreateResultData<QE, O>,
   CreateResultError
 >;
@@ -80,13 +173,31 @@ export type CreateResponse<QE = any, O = any> = ODataResponse<
 // Update Response Types
 // ============================================================================
 
-export type UpdateResultData<QE = any, O = any> =
-  | ({ data: any } & ODataMetadata)
-  | { data: undefined };
+// Determine data type based on options (same logic as Create)
+type UpdateDataShape<
+  QE extends QueryableEntity,
+  O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } }
+> = O['prefer'] extends { return_representation: true }
+  ? QE['properties'] // Return all properties when return_representation is true
+  : O['select'] extends readonly (keyof QE['properties'])[]
+  ? Pick<QE['properties'], ExtractSelectKeysForOperation<QE, O['select']>> // Return selected properties
+  : undefined; // No data returned when no select and no return_representation
+
+export type UpdateResultData<
+  QE extends QueryableEntity = any,
+  O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } } = any
+> = O['prefer'] extends { return_representation: true }
+  ? ({ data: UpdateDataShape<QE, O> } & ODataMetadata)
+  : O['select'] extends readonly (keyof QE['properties'])[]
+  ? ({ data: UpdateDataShape<QE, O> } & ODataMetadata)
+  : { data: undefined };
 
 export type UpdateResultError = ODataError;
 
-export type UpdateResponse<QE = any, O = any> = ODataResponse<
+export type UpdateResponse<
+  QE extends QueryableEntity = any,
+  O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } } = any
+> = ODataResponse<
   UpdateResultData<QE, O>,
   UpdateResultError
 >;

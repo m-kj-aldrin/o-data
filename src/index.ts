@@ -8,6 +8,7 @@ import type {
   EntitySetToQueryableEntity,
   EntitySetToQueryableEntity as ResolveEntitySet,
 } from './types';
+import { buildQueryableEntity } from './runtime';
 import type {
   CollectionQueryResponse,
   SingleQueryResponse,
@@ -67,8 +68,7 @@ export class OdataClient<S extends Schema<S>> {
    * Access an entityset collection.
    */
   entitysets<E extends EntitySetNames<S>>(entityset: E): CollectionOperation<S, EntitySetToQE<S, E>> {
-    // TODO: Build QueryableEntity shape from schema at runtime
-    const entity = {} as EntitySetToQE<S, E>;
+    const entity = buildQueryableEntity(this.#schema, String(entityset)) as EntitySetToQE<S, E>;
     return new CollectionOperation(this.#schema, entity, String(entityset), this.#options);
   }
 
@@ -123,8 +123,28 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity> {
     q: Q,
     o?: O
   ): Promise<CollectionQueryResponse<QE, Q, O>> {
-    // TODO: Implement query execution
-    throw new Error('Not implemented');
+    const url = this.buildUrl();
+    const request = new Request(url);
+    const response = await this.#options.transport(request);
+    const data = await response.json();
+    
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      result: data,
+    } as CollectionQueryResponse<QE, Q, O>;
+  }
+
+  /**
+   * Build the full URL for this operation.
+   */
+  private buildUrl(): string {
+    const baseUrl = this.#options.baseUrl.endsWith('/') 
+      ? this.#options.baseUrl.slice(0, -1) 
+      : this.#options.baseUrl;
+    return `${baseUrl}/${this.#path}`;
   }
 
   /**
@@ -197,8 +217,28 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity> {
     q: Q,
     o?: O
   ): Promise<SingleQueryResponse<QE, Q, O>> {
-    // TODO: Implement query execution
-    throw new Error('Not implemented');
+    const url = this.buildUrl();
+    const request = new Request(url);
+    const response = await this.#options.transport(request);
+    const data = await response.json();
+    
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      result: data,
+    } as SingleQueryResponse<QE, Q, O>;
+  }
+
+  /**
+   * Build the full URL for this operation.
+   */
+  private buildUrl(): string {
+    const baseUrl = this.#options.baseUrl.endsWith('/') 
+      ? this.#options.baseUrl.slice(0, -1) 
+      : this.#options.baseUrl;
+    return `${baseUrl}/${this.#path}`;
   }
 
   /**
@@ -242,8 +282,14 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity> {
     const newPath = `${this.#path}/${String(navigation_property)}`;
     
     // Build QueryableEntity shape from schema at runtime
-    if (typeof targetEntitysetKey === 'string' && targetEntitysetKey in this.#schema.entitysets) {
-      const targetEntity = {} as ResolveEntitySet<S, typeof targetEntitysetKey>;
+    const actualTargetKey = typeof targetEntitysetKey === 'string' 
+      ? targetEntitysetKey 
+      : Array.isArray(targetEntitysetKey) && targetEntitysetKey.length > 0
+      ? targetEntitysetKey[0]
+      : '';
+    
+    if (actualTargetKey && actualTargetKey in this.#schema.entitysets) {
+      const targetEntity = buildQueryableEntity(this.#schema, actualTargetKey) as ResolveEntitySet<S, typeof actualTargetKey>;
       if (navigation.collection) {
         return new CollectionOperation(this.#schema, targetEntity, newPath, this.#options) as any;
       } else {
@@ -252,7 +298,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity> {
     }
     
     // Fallback for union types or invalid targets
-    const fallbackEntity = {} as QueryableEntity;
+    const fallbackEntity = buildQueryableEntity(this.#schema, actualTargetKey || '');
     if (navigation.collection) {
       return new CollectionOperation(this.#schema, fallbackEntity, newPath, this.#options) as any;
     } else {

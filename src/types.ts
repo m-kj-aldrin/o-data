@@ -101,7 +101,8 @@ export type EntitySetToQueryableEntity<
         ? EntitySetsForEntityType<S, Target> extends infer EntitySetKey
           ? EntitySetKey extends string
             ? {
-                readonly target: any; // Will be resolved at runtime
+                // Resolve target to QueryableEntity type (like ResolvedSchema does)
+                readonly target: EntitySetToQueryableEntity<S, EntitySetKey>;
                 readonly targetEntitysetKey: EntitySetKey;
                 readonly collection: C extends true ? true : C extends false ? false : boolean;
               }
