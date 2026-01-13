@@ -196,6 +196,74 @@ test('collection query - filter parameter navigation property', async () => {
   }
 });
 
+test('collection query - filter parameter enum value with member name', async () => {
+  await client.entitysets('incidents').query({
+    filter: (h) => h.clause('status', 'eq', 'Active'),
+  });
+
+  expect(capturedUrls.length).toBe(1);
+  const url = capturedUrls[0]!;
+  const queryParams = parseQueryString(url);
+  const filterValue = queryParams['$filter'];
+  expect(filterValue).toBeDefined();
+  // Enum values should use FQN format: Namespace.EnumType'MemberName'
+  expect(filterValue).toBe("status eq Microsoft.Dynamics.CRM.IncidentStatus'Active'");
+});
+
+test('collection query - filter parameter enum value with numeric value', async () => {
+  await client.entitysets('incidents').query({
+    filter: (h) => h.clause('status', 'eq', 1), // Resolved = 1
+  });
+
+  expect(capturedUrls.length).toBe(1);
+  const url = capturedUrls[0]!;
+  const queryParams = parseQueryString(url);
+  const filterValue = queryParams['$filter'];
+  expect(filterValue).toBeDefined();
+  // Numeric enum values should be mapped to member names with FQN format
+  expect(filterValue).toBe("status eq Microsoft.Dynamics.CRM.IncidentStatus'Resolved'");
+});
+
+test('collection query - filter parameter enum value with different members', async () => {
+  await client.entitysets('incidents').query({
+    filter: (h) => h.clause('status', 'eq', 'Cancelled'),
+  });
+
+  expect(capturedUrls.length).toBe(1);
+  const url = capturedUrls[0]!;
+  const queryParams = parseQueryString(url);
+  const filterValue = queryParams['$filter'];
+  expect(filterValue).toBeDefined();
+  expect(filterValue).toBe("status eq Microsoft.Dynamics.CRM.IncidentStatus'Cancelled'");
+});
+
+test('collection query - filter parameter enum value with in operator', async () => {
+  await client.entitysets('incidents').query({
+    filter: (h) => h.clause('status', 'in', ['Active', 'Resolved']),
+  });
+
+  expect(capturedUrls.length).toBe(1);
+  const url = capturedUrls[0]!;
+  const queryParams = parseQueryString(url);
+  const filterValue = queryParams['$filter'];
+  expect(filterValue).toBeDefined();
+  // Enum values in 'in' operator should each use FQN format
+  expect(filterValue).toBe("status in (Microsoft.Dynamics.CRM.IncidentStatus'Active',Microsoft.Dynamics.CRM.IncidentStatus'Resolved')");
+});
+
+test('collection query - filter parameter enum value with ne operator', async () => {
+  await client.entitysets('incidents').query({
+    filter: (h) => h.clause('status', 'ne', 'Cancelled'),
+  });
+
+  expect(capturedUrls.length).toBe(1);
+  const url = capturedUrls[0]!;
+  const queryParams = parseQueryString(url);
+  const filterValue = queryParams['$filter'];
+  expect(filterValue).toBeDefined();
+  expect(filterValue).toBe("status ne Microsoft.Dynamics.CRM.IncidentStatus'Cancelled'");
+});
+
 test('collection query - multiple parameters combined', async () => {
   await client.entitysets('incidents').query({
     select: ['title'],
