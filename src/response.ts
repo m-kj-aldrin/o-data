@@ -36,7 +36,7 @@ export type ODataError = { error: any };
 
 import type { QueryableEntity, EntitySetToQueryableEntity } from './types';
 import type { Schema } from './schema';
-import type { CollectionQueryObject, SingleQueryObject } from './query';
+import type { CollectionQueryObject, SingleQueryObject, SingleExpandObject } from './query';
 
 // Helper to resolve navigation target QueryableEntity from targetEntitysetKey (same as in query.ts)
 type ResolveNavigationTarget<
@@ -65,7 +65,7 @@ type ExtractExpandShape<
 > = Q['expand'] extends Record<string, any>
   ? {
       [K in keyof Q['expand'] & keyof E['navigations']]: 
-        Q['expand'][K] extends SingleQueryObject<E['navigations'][K]['target']> | CollectionQueryObject<E['navigations'][K]['target']>
+        Q['expand'][K] extends SingleExpandObject<E['navigations'][K]['target']> | SingleQueryObject<E['navigations'][K]['target']> | CollectionQueryObject<E['navigations'][K]['target']>
           ? E['navigations'][K]['collection'] extends true
             ? Array<ExtractQueryResultShape<E['navigations'][K]['target'], Q['expand'][K], S>>
             : ExtractQueryResultShape<E['navigations'][K]['target'], Q['expand'][K], S>

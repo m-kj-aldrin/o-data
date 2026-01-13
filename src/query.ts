@@ -25,6 +25,21 @@ type ResolveNavigationTarget<
     : QueryableEntity
   : QueryableEntity; // For union types (array), fall back to base type
 
+// Single expand object - only select and expand (for single-valued navigations)
+export type SingleExpandObject<
+  E extends QueryableEntity,
+  S extends Schema<S> = Schema<any>
+> = {
+  select?: readonly (keyof E['properties'])[];
+  expand?: {
+    [K in keyof E['navigations']]?: E['navigations'][K]['targetEntitysetKey'] extends string | string[]
+      ? E['navigations'][K]['collection'] extends true
+        ? CollectionQueryObject<ResolveNavigationTarget<S, E['navigations'][K]['targetEntitysetKey']>, S>
+        : SingleExpandObject<ResolveNavigationTarget<S, E['navigations'][K]['targetEntitysetKey']>, S>
+      : never;
+  };
+};
+
 // Base query object (shared by collection and single)
 type BaseQueryObject<
   E extends QueryableEntity,
@@ -35,7 +50,7 @@ type BaseQueryObject<
     [K in keyof E['navigations']]?: E['navigations'][K]['targetEntitysetKey'] extends string | string[]
       ? E['navigations'][K]['collection'] extends true
         ? CollectionQueryObject<ResolveNavigationTarget<S, E['navigations'][K]['targetEntitysetKey']>, S>
-        : SingleQueryObject<ResolveNavigationTarget<S, E['navigations'][K]['targetEntitysetKey']>, S>
+        : SingleExpandObject<ResolveNavigationTarget<S, E['navigations'][K]['targetEntitysetKey']>, S>
       : never;
   };
   filter?: (h: FilterHelpers<E, S>) => FilterBuilder<E>;
@@ -52,11 +67,20 @@ export type CollectionQueryObject<
   count?: boolean;
 };
 
-// Single query object
+// Single query object - only select and expand (no filter/orderby)
 export type SingleQueryObject<
   E extends QueryableEntity,
   S extends Schema<S> = Schema<any>
-> = BaseQueryObject<E, S>;
+> = {
+  select?: readonly (keyof E['properties'])[];
+  expand?: {
+    [K in keyof E['navigations']]?: E['navigations'][K]['targetEntitysetKey'] extends string | string[]
+      ? E['navigations'][K]['collection'] extends true
+        ? CollectionQueryObject<ResolveNavigationTarget<S, E['navigations'][K]['targetEntitysetKey']>, S>
+        : SingleExpandObject<ResolveNavigationTarget<S, E['navigations'][K]['targetEntitysetKey']>, S>
+      : never;
+  };
+};
 
 // Query result data types (simplified for now, will be properly typed later)
 export type CollectionQueryResultData<E extends QueryableEntity, Q extends CollectionQueryObject<E>> = {

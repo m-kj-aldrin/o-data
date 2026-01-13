@@ -3,7 +3,7 @@
 // ============================================================================
 
 import type { QueryableEntity } from './types';
-import type { CollectionQueryObject, SingleQueryObject } from './query';
+import type { CollectionQueryObject, SingleQueryObject, SingleExpandObject } from './query';
 import { createFilterHelpers, serializeFilter } from './filter';
 import { buildQueryableEntity } from './runtime';
 import type { Schema } from './schema';
@@ -13,7 +13,7 @@ import type { Schema } from './schema';
 // ============================================================================
 
 function serializeExpandOptions<S extends Schema<S>>(
-  navQuery: SingleQueryObject<any> | CollectionQueryObject<any>,
+  navQuery: SingleExpandObject<any> | SingleQueryObject<any> | CollectionQueryObject<any>,
   navEntityDef: QueryableEntity | undefined,
   schema: S
 ): string {
@@ -50,14 +50,10 @@ function serializeExpandOptions<S extends Schema<S>>(
   }
   
   if ('orderby' in collectionQuery && collectionQuery.orderby) {
-    const orderbyValue = Array.isArray(collectionQuery.orderby[0])
-      ? (collectionQuery.orderby as Array<[string, 'asc' | 'desc']>)
-          .map(([prop, dir]) => `${prop} ${dir}`)
-          .join(',')
-      : (() => {
-          const [prop, dir] = collectionQuery.orderby as [string, 'asc' | 'desc'];
-          return `${prop} ${dir}`;
-        })();
+    const orderby = collectionQuery.orderby;
+    // orderby is readonly [keyof Properties, 'asc' | 'desc']
+    const [prop, dir] = orderby;
+    const orderbyValue = `${String(prop)} ${dir}`;
     nestedParams.push(`$orderby=${orderbyValue}`);
   }
   
@@ -119,8 +115,15 @@ export function buildQueryString<S extends Schema<S>>(
     }
   }
   
-  // Collection-only parameters
-  const isCollectionQuery = 'top' in query || 'skip' in query || 'count' in query;
+  // Check if this is a collection query (has collection-specific params or filter/orderby)
+  // SingleQueryObject doesn't have filter/orderby, so if they exist, it's a CollectionQueryObject
+  const isCollectionQuery = 
+    'top' in query || 
+    'skip' in query || 
+    'count' in query || 
+    'filter' in query || 
+    'orderby' in query;
+  
   if (isCollectionQuery) {
     const collectionQuery = query as CollectionQueryObject<any>;
     
@@ -133,14 +136,10 @@ export function buildQueryString<S extends Schema<S>>(
     }
     
     if ('orderby' in collectionQuery && collectionQuery.orderby) {
-      const orderbyValue = Array.isArray(collectionQuery.orderby[0])
-        ? (collectionQuery.orderby as Array<[string, 'asc' | 'desc']>)
-            .map(([prop, dir]) => `${prop} ${dir}`)
-            .join(',')
-        : (() => {
-            const [prop, dir] = collectionQuery.orderby as [string, 'asc' | 'desc'];
-            return `${prop} ${dir}`;
-          })();
+      const orderby = collectionQuery.orderby;
+      // orderby is readonly [keyof Properties, 'asc' | 'desc']
+      const [prop, dir] = orderby;
+      const orderbyValue = `${String(prop)} ${dir}`;
       params.push(`$orderby=${orderbyValue}`);
     }
     
@@ -157,30 +156,9 @@ export function buildQueryString<S extends Schema<S>>(
     if ('count' in collectionQuery && collectionQuery.count) {
       params.push('$count=true');
     }
-  } else {
-    // Single entity query - still support orderby and filter
-    if ('orderby' in query && query.orderby) {
-      const orderbyValue = Array.isArray(query.orderby[0])
-        ? (query.orderby as Array<[string, 'asc' | 'desc']>)
-            .map(([prop, dir]) => `${prop} ${dir}`)
-            .join(',')
-        : (() => {
-            const [prop, dir] = query.orderby as [string, 'asc' | 'desc'];
-            return `${prop} ${dir}`;
-          })();
-      params.push(`$orderby=${orderbyValue}`);
-    }
-    
-    if ('filter' in query && query.filter) {
-      if (typeof query.filter === 'function') {
-        const helpers = createFilterHelpers(entityDef, schema);
-        const builder = query.filter(helpers);
-        const state = (builder as any).state;
-        const filterString = serializeFilter(state, 0, undefined, entityDef);
-        params.push(`$filter=${encodeURIComponent(filterString)}`);
-      }
-    }
   }
+  // Note: Single entity queries (SingleQueryObject) only have select and expand,
+  // so filter and orderby are not serialized (they don't exist on the type)
   
   return params.length > 0 ? `?${params.join('&')}` : '';
 }
