@@ -23,6 +23,7 @@ import type {
   SingleQueryObject,
   QueryOperationOptions,
 } from './query';
+import { buildQueryString } from './serialization';
 import type {
   CreateObject,
   UpdateObject,
@@ -123,7 +124,8 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity> {
     q: Q,
     o?: O
   ): Promise<CollectionQueryResponse<QE, Q, O>> {
-    const url = this.buildUrl();
+    const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
+    const url = this.buildUrl(queryString);
     const request = new Request(url);
     const response = await this.#options.transport(request);
     const data = await response.json();
@@ -140,11 +142,11 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity> {
   /**
    * Build the full URL for this operation.
    */
-  private buildUrl(): string {
+  private buildUrl(queryString: string = ''): string {
     const baseUrl = this.#options.baseUrl.endsWith('/') 
       ? this.#options.baseUrl.slice(0, -1) 
       : this.#options.baseUrl;
-    return `${baseUrl}/${this.#path}`;
+    return `${baseUrl}/${this.#path}${queryString}`;
   }
 
   /**
@@ -217,7 +219,8 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity> {
     q: Q,
     o?: O
   ): Promise<SingleQueryResponse<QE, Q, O>> {
-    const url = this.buildUrl();
+    const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
+    const url = this.buildUrl(queryString);
     const request = new Request(url);
     const response = await this.#options.transport(request);
     const data = await response.json();
@@ -234,11 +237,11 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity> {
   /**
    * Build the full URL for this operation.
    */
-  private buildUrl(): string {
+  private buildUrl(queryString: string = ''): string {
     const baseUrl = this.#options.baseUrl.endsWith('/') 
       ? this.#options.baseUrl.slice(0, -1) 
       : this.#options.baseUrl;
-    return `${baseUrl}/${this.#path}`;
+    return `${baseUrl}/${this.#path}${queryString}`;
   }
 
   /**
