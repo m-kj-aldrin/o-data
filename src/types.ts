@@ -2,7 +2,7 @@
 // Type-Level Navigation Helpers
 // ============================================================================
 
-import type { Schema, EntityType, ODataType, NavigationType } from './schema';
+import type { Schema, EntityType, ODataType, NavigationType, PrimitiveName, ComplexTypeDefinition } from './schema';
 
 // ============================================================================
 // Extract EntityType from EntitySet
@@ -72,6 +72,109 @@ export type ExtractNavigations<ET extends EntityType<any, any, any>> = {
 };
 
 // ============================================================================
+// OData Type to TypeScript Mapping
+// ============================================================================
+
+// Map primitive OData types to TypeScript types
+type PrimitiveToTS<P extends PrimitiveName> = 
+  P extends 'Edm.Boolean' ? boolean :
+  P extends 'Edm.String' | 'Edm.Guid' | 'Edm.Duration' | 'Edm.TimeOfDay' ? string :
+  P extends 'Edm.Binary' ? string :
+  P extends 'Edm.Date' | 'Edm.DateTimeOffset' ? Date :
+  P extends 'Edm.Byte' | 'Edm.Int16' | 'Edm.Int32' | 'Edm.Int64' | 
+           'Edm.SByte' | 'Edm.Single' | 'Edm.Double' | 'Edm.Decimal' ? number :
+  P extends 'Edm.Stream' | 'Edm.Untyped' | 
+           'Edm.Geography' | 'Edm.GeographyPoint' | 'Edm.GeographyLineString' |
+           'Edm.GeographyPolygon' | 'Edm.GeographyMultiPoint' |
+           'Edm.GeographyMultiLineString' | 'Edm.GeographyMultiPolygon' |
+           'Edm.GeographyCollection' |
+           'Edm.Geometry' | 'Edm.GeometryPoint' | 'Edm.GeometryLineString' |
+           'Edm.GeometryPolygon' | 'Edm.GeometryMultiPoint' |
+           'Edm.GeometryMultiLineString' | 'Edm.GeometryMultiPolygon' |
+           'Edm.GeometryCollection' |
+           'Edm.ModelElementPath' | 'Edm.AnyPropertyPath' ? any :
+  never;
+
+// Map enum types to union types of enum member names
+type EnumToTS<
+  Target extends string,
+  S extends Schema<S>
+> = Target extends keyof NonNullable<S['enumtypes']>
+  ? NonNullable<S['enumtypes']>[Target] extends { members: infer Members }
+    ? Members extends Record<string, any>
+      ? keyof Members
+      : never
+    : never
+  : never;
+
+// Map complex types recursively with circular reference protection
+type ComplexTypeToTS<
+  Target extends string,
+  S extends Schema<S>,
+  Visited extends string = never
+> = Target extends Visited
+  ? never // Circular reference protection
+  : Target extends keyof NonNullable<S['complextypes']>
+    ? NonNullable<S['complextypes']>[Target] extends ComplexTypeDefinition<any, any, any>
+      ? {
+          readonly [K in keyof NonNullable<S['complextypes']>[Target]]: 
+            ODataTypeToTS<
+              NonNullable<S['complextypes']>[Target][K],
+              S,
+              Visited | Target
+            >
+        }
+      : never
+    : any; // Fallback if complex type not found
+
+// Main ODataType mapper - handles collections, nullable, and dispatches to specific mappers
+type ODataTypeToTS<
+  T extends ODataType<any, any, any>,
+  S extends Schema<S>,
+  Visited extends string = never
+> = T extends { collection: true }
+  ? T extends { type: 'enum'; target: infer Target }
+    ? Target extends string
+      ? Array<T extends { nullable?: true } | { nullable?: undefined } ? EnumToTS<Target, S> | null : EnumToTS<Target, S>>
+      : never
+    : T extends { type: 'complex'; target: infer Target }
+      ? Target extends string
+        ? Array<T extends { nullable?: true } | { nullable?: undefined } ? ComplexTypeToTS<Target, S, Visited> | null : ComplexTypeToTS<Target, S, Visited>>
+        : never
+      : T extends { type: infer P }
+        ? P extends PrimitiveName
+          ? Array<T extends { nullable?: true } | { nullable?: undefined } ? PrimitiveToTS<P> | null : PrimitiveToTS<P>>
+          : never
+        : never
+  : T extends { type: 'enum'; target: infer Target }
+    ? Target extends string
+      ? (T extends { nullable?: true } | { nullable?: undefined }
+          ? EnumToTS<Target, S> | null
+          : EnumToTS<Target, S>)
+      : never
+    : T extends { type: 'complex'; target: infer Target }
+      ? Target extends string
+        ? (T extends { nullable?: true } | { nullable?: undefined }
+            ? ComplexTypeToTS<Target, S, Visited> | null
+            : ComplexTypeToTS<Target, S, Visited>)
+        : never
+      : T extends { type: infer P }
+        ? P extends PrimitiveName
+          ? (T extends { nullable?: true } | { nullable?: undefined }
+              ? PrimitiveToTS<P> | null
+              : PrimitiveToTS<P>)
+          : never
+        : never;
+
+// Map a record of properties to TypeScript types
+type MapPropertiesToTS<
+  Props extends Record<string, ODataType<any, any, any>>,
+  S extends Schema<S>
+> = {
+  readonly [K in keyof Props]: ODataTypeToTS<Props[K], S>;
+};
+
+// ============================================================================
 // QueryableEntity Shape
 // ============================================================================
 
@@ -92,7 +195,10 @@ export type EntitySetToQueryableEntity<
   S extends Schema<S>,
   ES extends keyof S['entitysets']
 > = {
-  readonly properties: ExtractProperties<FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>>>;
+  readonly properties: MapPropertiesToTS<
+    ExtractProperties<FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>>>,
+    S
+  >;
   readonly navigations: {
     readonly [K in keyof ExtractNavigations<FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>>>]: ExtractNavigations<
       FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>>
