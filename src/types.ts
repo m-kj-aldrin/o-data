@@ -263,9 +263,17 @@ export type EntitySetToQueryableEntity<S extends Schema<S>, ES extends keyof S['
   >;
   readonly navigations: {
     readonly [K in keyof ExtractNavigations<
-      FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>> & EntityType<any, any, any>
+      FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>> extends infer Flattened
+        ? Flattened extends { properties: Record<string, any> }
+          ? Flattened
+          : { properties: Record<string, never> }
+        : { properties: Record<string, never> }
     >]: ExtractNavigations<
-      FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>> & EntityType<any, any, any>
+      FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>> extends infer Flattened
+        ? Flattened extends { properties: Record<string, any> }
+          ? Flattened
+          : { properties: Record<string, never> }
+        : { properties: Record<string, never> }
     >[K] extends { target: infer Target; collection: infer C }
       ? Target extends keyof S['entitytypes']
         ? EntitySetsForEntityType<S, Target> extends infer EntitySetKey
