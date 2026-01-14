@@ -189,12 +189,14 @@ test('bound function - uses FQN in URL', async () => {
   // Verify URL path contains FQN
   const fullUrl = getRequestUrl(req);
   const path = getRequestPath(req);
-  expect(path).toBe('/incidents(guid-123)/Microsoft.Dynamics.CRM.getRelatedCount(relationType=@relationType)');
+  expect(path).toBe(
+    '/incidents(guid-123)/Microsoft.Dynamics.CRM.getRelatedCount(relationType=@relationType)'
+  );
 
   // Verify query string contains parameter value
   const queryString = getQueryString(fullUrl);
   expect(queryString).toContain('@relationType');
-  
+
   const queryParams = parseQueryParams(fullUrl);
   expect(queryParams['@relationType']).toBe("'contact'");
 });
@@ -224,7 +226,7 @@ test('unbound function - uses import name, no FQN', async () => {
   const queryString = getQueryString(fullUrl);
   expect(queryString).toContain('@query');
   expect(queryString).toContain('@entityTypes');
-  
+
   const queryParams = parseQueryParams(fullUrl);
   expect(queryParams['@query']).toBe("'test'");
   // entityTypes should be JSON stringified and URL encoded
@@ -249,15 +251,16 @@ test('action parameter - navigation type with string GUID (bind to existing)', a
   const body = await getRequestBody(req);
 
   expect(body.Status).toBe(1);
-  expectBind(body, 'IncidentResolution', '/incidents(guid-123)');
+  // Should bind to incidentresolutions entityset (plural)
+  expectBind(body, 'IncidentResolution', '/incidentresolutions(guid-123)');
 });
 
-test('action parameter - navigation type with object literal (deep insert)', async () => {
+test('action parameter - navigation type with object literal (deep insert with nested bind)', async () => {
   await client.action('CloseIncident', {
     parameters: {
       IncidentResolution: {
-        title: 'Resolved Incident',
-        description: 'This is resolved',
+        subject: 'Subject of the incidentresolution', // property from activitypointer baseType
+        incidentid: 'guid-123', // navigation property - should bind to existing incident
       },
       Status: 1,
     },
@@ -269,17 +272,18 @@ test('action parameter - navigation type with object literal (deep insert)', asy
 
   expect(body.Status).toBe(1);
   expect(body.IncidentResolution).toBeDefined();
-  expect(body.IncidentResolution.title).toBe('Resolved Incident');
-  expect(body.IncidentResolution.description).toBe('This is resolved');
-  expectNoBind(body, 'IncidentResolution');
+  expect(body.IncidentResolution.subject).toBe('Subject of the incidentresolution');
+  // incidentid should be serialized as @odata.bind within the deep insert
+  expectBind(body.IncidentResolution, 'incidentid', '/incidents(guid-123)');
+  expectNoBind(body, 'IncidentResolution'); // The parameter itself is deep insert, not bind
 });
 
 test('action parameter - navigation type with nested navigation bind', async () => {
   await client.action('CloseIncident', {
     parameters: {
       IncidentResolution: {
-        title: 'Resolved Incident',
-        incident_contact: 'guid-456', // Should bind to existing contact
+        subject: 'Subject of the incidentresolution',
+        incidentid: 'guid-123', // Should bind to existing incident
       },
       Status: 1,
     },
@@ -291,18 +295,18 @@ test('action parameter - navigation type with nested navigation bind', async () 
 
   expect(body.Status).toBe(1);
   expect(body.IncidentResolution).toBeDefined();
-  expect(body.IncidentResolution.title).toBe('Resolved Incident');
-  expectBind(body.IncidentResolution, 'incident_contact', '/contacts(guid-456)');
+  expect(body.IncidentResolution.subject).toBe('Subject of the incidentresolution');
+  expectBind(body.IncidentResolution, 'incidentid', '/incidents(guid-123)');
 });
 
 test('action parameter - navigation type with nested deep insert', async () => {
   await client.action('CloseIncident', {
     parameters: {
       IncidentResolution: {
-        title: 'Resolved Incident',
-        incident_contact: {
-          name: 'Jane Doe',
-          email: 'jane@example.com',
+        subject: 'Subject of the incidentresolution',
+        incidentid: {
+          title: 'Incident Title',
+          description: 'Incident Description',
         },
       },
       Status: 1,
@@ -315,10 +319,12 @@ test('action parameter - navigation type with nested deep insert', async () => {
 
   expect(body.Status).toBe(1);
   expect(body.IncidentResolution).toBeDefined();
-  expect(body.IncidentResolution.title).toBe('Resolved Incident');
-  expect(body.IncidentResolution.incident_contact).toEqual({
-    name: 'Jane Doe',
-    email: 'jane@example.com',
+  expect(body.IncidentResolution.subject).toBe('Subject of the incidentresolution');
+  // incidentid should be a nested deep insert object
+  expect(body.IncidentResolution.incidentid).toEqual({
+    title: 'Incident Title',
+    description: 'Incident Description',
   });
-  expectNoBind(body.IncidentResolution, 'incident_contact');
+  expectNoBind(body.IncidentResolution, 'incidentid');
+  expectNoBind(body, 'IncidentResolution');
 });

@@ -2,8 +2,8 @@
 // Operation Types
 // ============================================================================
 
-import type { QueryableEntity, ODataTypeToTS } from './types';
-import type { Schema, ODataType } from './schema';
+import type { QueryableEntity, ODataTypeToTS, EntitySetsForEntityType, EntitySetToQueryableEntity } from './types';
+import type { Schema, ODataType, NavigationType } from './schema';
 
 // ============================================================================
 // Helper Types
@@ -148,12 +148,40 @@ export type UpdateOperationOptions<QE extends QueryableEntity> = {
 // Operation Parameters
 // ============================================================================
 
-// Map each parameter using ODataTypeToTS
+// Navigation parameter value type - maps navigation types to union of string/number/tuple/object
+type NavigationParameterValue<
+  S extends Schema<S>,
+  N extends NavigationType<any>
+> = N['target'] extends keyof S['entitytypes']
+  ? EntitySetsForEntityType<S, N['target']> extends infer EntitySetKey
+    ? EntitySetKey extends string
+      ? N['collection'] extends true
+        ? // Collection navigation parameter
+          | string[]
+          | number[]
+          | [EntitySetKey, string | number][]
+          | CreateObject<EntitySetToQueryableEntity<S, EntitySetKey>>[]
+        : // Single-valued navigation parameter
+          | string
+          | number
+          | [EntitySetKey, string | number]
+          | CreateObject<EntitySetToQueryableEntity<S, EntitySetKey>>
+      : N['collection'] extends true
+      ? string[] | number[] | [string, string | number][] | any[]
+      : string | number | [string, string | number] | any
+    : N['collection'] extends true
+    ? string[] | number[] | [string, string | number][] | any[]
+    : string | number | [string, string | number] | any
+  : never;
+
+// Map each parameter using ODataTypeToTS or NavigationParameterValue
 type MappedParameters<
   S extends Schema<S>,
   P extends Record<string, ODataType<any>>
 > = {
-  [K in keyof P]: ODataTypeToTS<P[K], S>;
+  [K in keyof P]: P[K] extends NavigationType<any>
+    ? NavigationParameterValue<S, P[K]>
+    : ODataTypeToTS<P[K], S>;
 };
 
 // Required parameters (non-nullable)

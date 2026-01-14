@@ -62,7 +62,7 @@ function flattenEntityType<S extends Schema<S>>(
 // Helper: Find entityset(s) for an entitytype
 // ============================================================================
 
-function findEntitySetsForEntityType<S extends Schema<S>>(
+export function findEntitySetsForEntityType<S extends Schema<S>>(
   schema: S,
   entitytypeName: string
 ): string | string[] {

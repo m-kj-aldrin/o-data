@@ -22,7 +22,13 @@ export const coop_crm_schema = schema({
     },
   },
   entitytypes: {
+    Base: {
+      properties: {
+        id: { type: 'Edm.Guid' },
+      },
+    },
     Incident: {
+      baseType: 'Base',
       properties: {
         id: { type: 'Edm.Guid', nullable: true },
         title: { type: 'Edm.String' },
@@ -39,6 +45,7 @@ export const coop_crm_schema = schema({
       },
     },
     Contact: {
+      baseType: 'Base',
       properties: {
         id: { type: 'Edm.Guid' },
         name: { type: 'Edm.String' },
@@ -51,17 +58,21 @@ export const coop_crm_schema = schema({
         },
       },
     },
-  },
-  ActivityResolution: {
-    properties: {
-      id: { type: 'Edm.Guid' },
-      name: { type: 'Edm.String' },
-      description: { type: 'Edm.String' },
-      incident: {
-        type: 'navigation',
-        target: 'Incident',
-        collection: false,
-      }
+    activitypointer: {
+      baseType: 'Base',
+      properties: {
+        subject: { type: 'Edm.String' },
+      },
+    },
+    incidentresolution: {
+      baseType: 'activitypointer',
+      properties: {
+        incidentid: {
+          type: 'navigation',
+          target: 'Incident',
+          collection: false,
+        },
+      },
     },
   },
   entitysets: {
@@ -71,12 +82,18 @@ export const coop_crm_schema = schema({
     contacts: {
       entitytype: 'Contact',
     },
+    activitypointers: {
+      entitytype: 'activitypointer',
+    },
+    incidentresolutions: {
+      entitytype: 'incidentresolution',
+    },
   },
   actions: {
     CloseIncident: {
       type: 'unbound',
       parameters: {
-        IncidentResolution: { type: 'navigation', collection: false, target: 'Incident' },
+        IncidentResolution: { type: 'navigation', collection: false, target: 'incidentresolution' },
         Status: { type: 'Edm.Int32' },
       },
     },

@@ -5,8 +5,8 @@
 import type { QueryableEntity } from './types';
 import type { CollectionQueryObject, SingleQueryObject, SingleExpandObject } from './query';
 import { createFilterHelpers, serializeFilter } from './filter';
-import { buildQueryableEntity } from './runtime';
-import type { Schema, ODataType } from './schema';
+import { buildQueryableEntity, findEntitySetsForEntityType } from './runtime';
+import type { Schema, ODataType, NavigationType } from './schema';
 import type { CreateObject, UpdateObject, CreateOperationOptions, UpdateOperationOptions } from './operations';
 
 // ============================================================================
@@ -461,6 +461,97 @@ export function buildUpdateRequest<S extends Schema<S>>(
 // ============================================================================
 
 /**
+ * Transform action/function parameters to handle navigation (entity type) parameters.
+ * Converts string/number IDs to @odata.bind format and handles deep inserts.
+ */
+export function transformActionParameters<S extends Schema<S>>(
+  parameters: Record<string, any>,
+  parameterDefs: Record<string, ODataType<any>>,
+  schema: S
+): any {
+  const transformed: any = {};
+  
+  for (const [key, value] of Object.entries(parameters)) {
+    const paramDef = parameterDefs[key];
+    
+    // Check if this parameter is a navigation type (entity type parameter)
+    if (paramDef && typeof paramDef === 'object' && 'type' in paramDef && paramDef.type === 'navigation') {
+      const navDef = paramDef as NavigationType<any>;
+      const targetEntityType = navDef.target as string;
+      const isCollection = navDef.collection === true;
+      
+      // Resolve entityset(s) for this entity type
+      const entitysetKey = findEntitySetsForEntityType(schema, targetEntityType);
+      
+      if (!entitysetKey) {
+        // No entityset found - pass through as-is (shouldn't happen in valid schemas)
+        transformed[key] = value;
+        continue;
+      }
+      
+      // Resolve target entityset (use first if multiple)
+      const targetEntitysetKey = Array.isArray(entitysetKey) ? entitysetKey[0] : entitysetKey;
+      
+      if (!isCollection) {
+        // Single-valued navigation parameter
+        if (typeof value === 'string' && value.startsWith('$')) {
+          // Batch reference
+          transformed[`${key}@odata.bind`] = value;
+        } else if (
+          Array.isArray(value) &&
+          value.length === 2 &&
+          typeof value[0] === 'string' &&
+          (typeof value[1] === 'string' || typeof value[1] === 'number')
+        ) {
+          // Explicit entityset format: [entityset, id]
+          const [set, id] = value as [string, string | number];
+          transformed[`${key}@odata.bind`] = `/${set}(${id})`;
+        } else if (typeof value === 'string' || typeof value === 'number') {
+          // Plain ID - resolve entityset from parameter definition
+          transformed[`${key}@odata.bind`] = `/${targetEntitysetKey}(${value})`;
+        } else if (typeof value === 'object' && value !== null) {
+          // Deep insert - recursive transformation
+          const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+          transformed[key] = transformCreateObjectForBind(value, targetEntity, schema);
+        } else {
+          transformed[key] = value;
+        }
+      } else {
+        // Collection navigation parameter
+        if (Array.isArray(value)) {
+          if (value.length > 0 && (typeof value[0] === 'string' || typeof value[0] === 'number')) {
+            // Array of string/number IDs (or batch references)
+            transformed[`${key}@odata.bind`] = (value as (string | number)[]).map((v: string | number) =>
+              typeof v === 'string' && v.startsWith('$') ? v : `/${targetEntitysetKey}(${v})`
+            );
+          } else if (value.length > 0 && Array.isArray(value[0])) {
+            // Array of [entityset, id] tuples
+            transformed[`${key}@odata.bind`] = (value as [string, string | number][]).map(
+              ([set, id]) => `/${set}(${id})`
+            );
+          } else {
+            // Array of objects - deep insert (recursive)
+            const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+            transformed[key] = (value as any[]).map((item: any) =>
+              typeof item === 'object' && item !== null
+                ? transformCreateObjectForBind(item, targetEntity, schema)
+                : item
+            );
+          }
+        } else {
+          transformed[key] = value;
+        }
+      }
+    } else {
+      // Not a navigation parameter - pass through as-is
+      transformed[key] = value;
+    }
+  }
+  
+  return transformed;
+}
+
+/**
  * Build a POST request for an OData action.
  */
 export function buildActionRequest<S extends Schema<S>>(
@@ -482,9 +573,7 @@ export function buildActionRequest<S extends Schema<S>>(
   });
 
   // Transform parameters - handle entity parameters for deep inserts/binds
-  // For now, pass through parameters as-is. Entity parameter transformation
-  // can be added later if needed (similar to transformCreateObjectForBind)
-  const transformedParams = parameters;
+  const transformedParams = transformActionParameters(parameters, parameterDefs, schema);
 
   return new Request(url, {
     method: 'POST',
