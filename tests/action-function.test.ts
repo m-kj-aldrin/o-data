@@ -94,6 +94,23 @@ function parseQueryParams(url: string): Record<string, string> {
   return params;
 }
 
+/**
+ * Assert that a navigation property has been transformed to @odata.bind format
+ */
+function expectBind(payload: any, navProperty: string, expectedValue: any) {
+  const bindKey = `${navProperty}@odata.bind`;
+  expect(payload[bindKey]).toEqual(expectedValue);
+  expect(payload[navProperty]).toBeUndefined();
+}
+
+/**
+ * Assert that no bind exists for a navigation property (for deep inserts)
+ */
+function expectNoBind(payload: any, navProperty: string) {
+  const bindKey = `${navProperty}@odata.bind`;
+  expect(payload[bindKey]).toBeUndefined();
+}
+
 // ============================================================================
 // Test Cases
 // ============================================================================
@@ -213,4 +230,95 @@ test('unbound function - uses import name, no FQN', async () => {
   // entityTypes should be JSON stringified and URL encoded
   expect(queryParams['@entityTypes']).toContain('Incident');
   expect(queryParams['@entityTypes']).toContain('Contact');
+});
+
+// ============================================================================
+// Action Parameter Serialization Tests - Navigation Types
+// ============================================================================
+
+test('action parameter - navigation type with string GUID (bind to existing)', async () => {
+  await client.action('CloseIncident', {
+    parameters: {
+      IncidentResolution: 'guid-123',
+      Status: 1,
+    },
+  });
+
+  expect(capturedRequests.length).toBe(1);
+  const req = capturedRequests[0]!;
+  const body = await getRequestBody(req);
+
+  expect(body.Status).toBe(1);
+  expectBind(body, 'IncidentResolution', '/incidents(guid-123)');
+});
+
+test('action parameter - navigation type with object literal (deep insert)', async () => {
+  await client.action('CloseIncident', {
+    parameters: {
+      IncidentResolution: {
+        title: 'Resolved Incident',
+        description: 'This is resolved',
+      },
+      Status: 1,
+    },
+  });
+
+  expect(capturedRequests.length).toBe(1);
+  const req = capturedRequests[0]!;
+  const body = await getRequestBody(req);
+
+  expect(body.Status).toBe(1);
+  expect(body.IncidentResolution).toBeDefined();
+  expect(body.IncidentResolution.title).toBe('Resolved Incident');
+  expect(body.IncidentResolution.description).toBe('This is resolved');
+  expectNoBind(body, 'IncidentResolution');
+});
+
+test('action parameter - navigation type with nested navigation bind', async () => {
+  await client.action('CloseIncident', {
+    parameters: {
+      IncidentResolution: {
+        title: 'Resolved Incident',
+        incident_contact: 'guid-456', // Should bind to existing contact
+      },
+      Status: 1,
+    },
+  });
+
+  expect(capturedRequests.length).toBe(1);
+  const req = capturedRequests[0]!;
+  const body = await getRequestBody(req);
+
+  expect(body.Status).toBe(1);
+  expect(body.IncidentResolution).toBeDefined();
+  expect(body.IncidentResolution.title).toBe('Resolved Incident');
+  expectBind(body.IncidentResolution, 'incident_contact', '/contacts(guid-456)');
+});
+
+test('action parameter - navigation type with nested deep insert', async () => {
+  await client.action('CloseIncident', {
+    parameters: {
+      IncidentResolution: {
+        title: 'Resolved Incident',
+        incident_contact: {
+          name: 'Jane Doe',
+          email: 'jane@example.com',
+        },
+      },
+      Status: 1,
+    },
+  });
+
+  expect(capturedRequests.length).toBe(1);
+  const req = capturedRequests[0]!;
+  const body = await getRequestBody(req);
+
+  expect(body.Status).toBe(1);
+  expect(body.IncidentResolution).toBeDefined();
+  expect(body.IncidentResolution.title).toBe('Resolved Incident');
+  expect(body.IncidentResolution.incident_contact).toEqual({
+    name: 'Jane Doe',
+    email: 'jane@example.com',
+  });
+  expectNoBind(body.IncidentResolution, 'incident_contact');
 });

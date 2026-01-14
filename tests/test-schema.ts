@@ -52,6 +52,18 @@ export const coop_crm_schema = schema({
       },
     },
   },
+  ActivityResolution: {
+    properties: {
+      id: { type: 'Edm.Guid' },
+      name: { type: 'Edm.String' },
+      description: { type: 'Edm.String' },
+      incident: {
+        type: 'navigation',
+        target: 'Incident',
+        collection: false,
+      }
+    },
+  },
   entitysets: {
     incidents: {
       entitytype: 'Incident',
@@ -61,6 +73,13 @@ export const coop_crm_schema = schema({
     },
   },
   actions: {
+    CloseIncident: {
+      type: 'unbound',
+      parameters: {
+        IncidentResolution: { type: 'navigation', collection: false, target: 'Incident' },
+        Status: { type: 'Edm.Int32' },
+      },
+    },
     assignIncident: {
       type: 'bound',
       collection: false,
@@ -109,6 +128,9 @@ export const coop_crm_schema = schema({
   actionImports: {
     BulkCreate: {
       action: 'bulkCreate',
+    },
+    CloseIncident: {
+      action: 'CloseIncident',
     },
   },
   functionImports: {
