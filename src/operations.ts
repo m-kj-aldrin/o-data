@@ -152,26 +152,28 @@ export type UpdateOperationOptions<QE extends QueryableEntity> = {
 type NavigationParameterValue<
   S extends Schema<S>,
   N extends NavigationType<any>
-> = N['target'] extends keyof S['entitytypes']
-  ? EntitySetsForEntityType<S, N['target']> extends infer EntitySetKey
-    ? EntitySetKey extends string
-      ? N['collection'] extends true
-        ? // Collection navigation parameter
-          | string[]
-          | number[]
-          | [EntitySetKey, string | number][]
-          | CreateObject<EntitySetToQueryableEntity<S, EntitySetKey>>[]
-        : // Single-valued navigation parameter
-          | string
-          | number
-          | [EntitySetKey, string | number]
-          | CreateObject<EntitySetToQueryableEntity<S, EntitySetKey>>
+> = N extends NavigationType<infer Target>
+  ? Target extends keyof S['entitytypes']
+    ? EntitySetsForEntityType<S, Target> extends infer EntitySetKey
+      ? EntitySetKey extends string
+        ? N['collection'] extends true
+          ? // Collection navigation parameter
+            | string[]
+            | number[]
+            | [EntitySetKey, string | number][]
+            | CreateObject<EntitySetToQueryableEntity<S, EntitySetKey>>[]
+          : // Single-valued navigation parameter
+            | string
+            | number
+            | [EntitySetKey, string | number]
+            | CreateObject<EntitySetToQueryableEntity<S, EntitySetKey>>
+        : N['collection'] extends true
+        ? string[] | number[] | [string, string | number][] | any[]
+        : string | number | [string, string | number] | any
       : N['collection'] extends true
       ? string[] | number[] | [string, string | number][] | any[]
       : string | number | [string, string | number] | any
-    : N['collection'] extends true
-    ? string[] | number[] | [string, string | number][] | any[]
-    : string | number | [string, string | number] | any
+    : never
   : never;
 
 // Map each parameter using ODataTypeToTS or NavigationParameterValue

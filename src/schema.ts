@@ -118,38 +118,38 @@ export type BoundAction<TEntityTypeKeys extends string = string> = {
   type: 'bound';
   collection: boolean;
   target: TEntityTypeKeys; // keyof entitytypes (constrained in Schema)
-  parameters: Record<string, ODataType<any>>;
-  returnType?: ODataType<any>; // optional - actions can return void
+  parameters: Record<string, ODataType<TEntityTypeKeys, any, any>>;
+  returnType?: ODataType<TEntityTypeKeys, any, any>; // optional - actions can return void
 };
 
-export type UnboundAction = {
+export type UnboundAction<TEntityTypeKeys extends string = string> = {
   type: 'unbound';
-  parameters: Record<string, ODataType<any>>;
-  returnType?: ODataType<any>; // optional - actions can return void
+  parameters: Record<string, ODataType<TEntityTypeKeys, any, any>>;
+  returnType?: ODataType<TEntityTypeKeys, any, any>; // optional - actions can return void
 };
 
 export type Action<TEntityTypeKeys extends string = string> =
   | BoundAction<TEntityTypeKeys>
-  | UnboundAction;
+  | UnboundAction<TEntityTypeKeys>;
 
 // 6. Function Types
 export type BoundFunction<TEntityTypeKeys extends string = string> = {
   type: 'bound';
   collection: boolean;
   target: TEntityTypeKeys; // keyof entitytypes (constrained in Schema)
-  parameters: Record<string, ODataType<any>>;
-  returnType: ODataType<any>; // required - functions must return a value
+  parameters: Record<string, ODataType<TEntityTypeKeys, any, any>>;
+  returnType: ODataType<TEntityTypeKeys, any, any>; // required - functions must return a value
 };
 
-export type UnboundFunction = {
+export type UnboundFunction<TEntityTypeKeys extends string = string> = {
   type: 'unbound';
-  parameters: Record<string, ODataType<any>>;
-  returnType: ODataType<any>; // required - functions must return a value
+  parameters: Record<string, ODataType<TEntityTypeKeys, any, any>>;
+  returnType: ODataType<TEntityTypeKeys, any, any>; // required - functions must return a value
 };
 
 export type Function<TEntityTypeKeys extends string = string> =
   | BoundFunction<TEntityTypeKeys>
-  | UnboundFunction;
+  | UnboundFunction<TEntityTypeKeys>;
 
 // 7. Import Types
 export type ActionImport<TActionKeys extends string> = {
