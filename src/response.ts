@@ -34,8 +34,8 @@ export type ODataError = { error: any };
 // Query Response Types
 // ============================================================================
 
-import type { QueryableEntity, EntitySetToQueryableEntity } from './types';
-import type { Schema } from './schema';
+import type { QueryableEntity, EntitySetToQueryableEntity, ODataTypeToTS } from './types';
+import type { Schema, ODataType } from './schema';
 import type { CollectionQueryObject, SingleQueryObject, SingleExpandObject } from './query';
 
 // Helper to resolve navigation target QueryableEntity from targetEntitysetKey (same as in query.ts)
@@ -223,8 +223,11 @@ export type ActionResultData<R = any> = {
 
 export type ActionResultError = ODataError;
 
-export type ActionResponse<S = any, R = any> = ODataResponse<
-  ActionResultData<R>,
+export type ActionResponse<
+  S extends Schema<S> = any, 
+  R extends ODataType<any> | undefined = any
+> = ODataResponse<
+  ActionResultData<R extends undefined ? void : ODataTypeToTS<R, S>>,
   ActionResultError
 >;
 
@@ -235,7 +238,10 @@ export type FunctionResultData<R = any> = {
 
 export type FunctionResultError = ODataError;
 
-export type FunctionResponse<S = any, R = any> = ODataResponse<
-  FunctionResultData<R>,
+export type FunctionResponse<
+  S extends Schema<S> = any, 
+  R extends ODataType<any> = any
+> = ODataResponse<
+  FunctionResultData<ODataTypeToTS<R, S>>,
   FunctionResultError
 >;
