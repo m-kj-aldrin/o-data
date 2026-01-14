@@ -401,7 +401,21 @@ async function main() {
       return;
     }
 
-    // Could be an EntityType, but we don't need to track it here
+    // Check if EntityType - if so, include it and its EntitySet
+    if (entityTypes.has(resolvedType)) {
+      const entitySetName = typeToSetMap.get(resolvedType);
+      if (entitySetName && !isExcluded(entitySetName, 'entities')) {
+        // Add EntitySet if not already included
+        if (!includedEntitySets.has(entitySetName)) {
+          includedEntitySets.add(entitySetName);
+        }
+        // Add EntityType and resolve baseType chain
+        if (!includedEntityTypes.has(resolvedType)) {
+          resolveBaseTypeChain(resolvedType);
+        }
+      }
+      return;
+    }
   }
 
   // Extract properties and navigations from included EntityTypes
@@ -900,6 +914,17 @@ async function main() {
     out += `  actionImports: {\n`;
     for (const [importName, actionFQN] of Array.from(actionImports.entries()).sort()) {
       const actionShortName = getShortName(actionFQN);
+      // Check if action is excluded
+      if (isExcluded(actionShortName, 'actions')) {
+        continue; // Skip excluded actions
+      }
+      
+      // Check if this action is actually included (bound or unbound)
+      const isIncluded = allActions.some(op => op.def['@_Name'] === actionShortName);
+      if (!isIncluded) {
+        continue; // Skip if action not included
+      }
+      
       out += `    "${importName}": {\n`;
       out += `      action: "${actionShortName}",\n`;
       out += `    },\n`;
@@ -912,6 +937,17 @@ async function main() {
     out += `  functionImports: {\n`;
     for (const [importName, functionFQN] of Array.from(functionImports.entries()).sort()) {
       const functionShortName = getShortName(functionFQN);
+      // Check if function is excluded
+      if (isExcluded(functionShortName, 'functions')) {
+        continue; // Skip excluded functions
+      }
+      
+      // Check if this function is actually included (bound or unbound)
+      const isIncluded = allFunctions.some(op => op.def['@_Name'] === functionShortName);
+      if (!isIncluded) {
+        continue; // Skip if function not included
+      }
+      
       out += `    "${importName}": {\n`;
       out += `      function: "${functionShortName}",\n`;
       out += `    },\n`;
