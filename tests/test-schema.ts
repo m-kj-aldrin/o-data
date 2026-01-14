@@ -23,28 +23,32 @@ export const coop_crm_schema = schema({
   },
   entitytypes: {
     Incident: {
-      id: { type: 'Edm.Guid', nullable: true },
-      title: { type: 'Edm.String' },
-      description: { type: 'Edm.String', nullable: true },
-      status: {
-        type: 'enum',
-        target: 'IncidentStatus',
-      },
-      incident_contact: {
-        type: 'navigation',
-        target: 'Contact',
-        collection: false,
+      properties: {
+        id: { type: 'Edm.Guid', nullable: true },
+        title: { type: 'Edm.String' },
+        description: { type: 'Edm.String', nullable: true },
+        status: {
+          type: 'enum',
+          target: 'IncidentStatus',
+        },
+        incident_contact: {
+          type: 'navigation',
+          target: 'Contact',
+          collection: false,
+        },
       },
     },
     Contact: {
-      id: { type: 'Edm.Guid' },
-      name: { type: 'Edm.String' },
-      email: { type: 'Edm.String' },
-      phone: { type: 'Edm.String' },
-      contact_incidents: {
-        type: 'navigation',
-        target: 'Incident',
-        collection: true,
+      properties: {
+        id: { type: 'Edm.Guid' },
+        name: { type: 'Edm.String' },
+        email: { type: 'Edm.String' },
+        phone: { type: 'Edm.String' },
+        contact_incidents: {
+          type: 'navigation',
+          target: 'Incident',
+          collection: true,
+        },
       },
     },
   },

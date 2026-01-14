@@ -24,19 +24,19 @@ function flattenEntityType<S extends Schema<S>>(
 ): EntityType<any, any, any> {
   // Circular reference protection
   if (visited.has(entitytypeName)) {
-    return {} as EntityType<any, any, any>;
+    return { properties: {} } as EntityType<any, any, any>;
   }
 
   const entitytypes = schema.entitytypes as Record<string, EntityType<any, any, any>>;
   const entitytype = entitytypes[entitytypeName];
   if (!entitytype) {
-    return {} as EntityType<any, any, any>;
+    return { properties: {} } as EntityType<any, any, any>;
   }
 
   visited.add(entitytypeName);
 
   // If no baseType, return as-is
-  if (!('baseType' in entitytype) || !entitytype.baseType) {
+  if (!entitytype.baseType) {
     visited.delete(entitytypeName);
     return entitytype as EntityType<any, any, any>;
   }
@@ -45,12 +45,17 @@ function flattenEntityType<S extends Schema<S>>(
   const baseTypeName = entitytype.baseType as string;
   const baseType = flattenEntityType(schema, baseTypeName, visited);
   
-  // Merge baseType with current entitytype (current overrides base)
-  const { baseType: _, ...currentProps } = entitytype as any;
-  const flattened = { ...baseType, ...currentProps };
+  // Merge properties objects (current overrides base)
+  const flattened: EntityType<any, any, any> = {
+    baseType: entitytype.baseType,
+    properties: {
+      ...(baseType.properties || {}),
+      ...(entitytype.properties || {}),
+    },
+  };
 
   visited.delete(entitytypeName);
-  return flattened as EntityType<any, any, any>;
+  return flattened;
 }
 
 // ============================================================================
@@ -113,7 +118,7 @@ export function buildQueryableEntity<S extends Schema<S>>(
 
   // Extract properties (non-navigation fields)
   const properties: Record<string, any> = {};
-  for (const [key, value] of Object.entries(flattenedEntityType)) {
+  for (const [key, value] of Object.entries(flattenedEntityType.properties || {})) {
     if (!isNavigation(value)) {
       properties[key] = value;
     }
@@ -121,7 +126,7 @@ export function buildQueryableEntity<S extends Schema<S>>(
 
   // Extract navigations
   const navigations: Record<string, { target: any; targetEntitysetKey: string | string[]; collection: boolean }> = {};
-  for (const [key, value] of Object.entries(flattenedEntityType)) {
+  for (const [key, value] of Object.entries(flattenedEntityType.properties || {})) {
     if (isNavigation(value)) {
       const targetEntitytypeName = value.target as string;
       const targetEntitysetKey = findEntitySetsForEntityType(schema, targetEntitytypeName);

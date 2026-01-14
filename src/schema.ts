@@ -107,9 +107,10 @@ export type EntityType<
   TEnumKeys extends string = string,
   TComplexKeys extends string = string
 > = {
-  [key: string]: ODataType<TEntityTypeKeys, TEnumKeys, TComplexKeys>;
-} & {
   baseType?: Extract<TEntityTypeKeys, string>;
+  properties: {
+    [key: string]: ODataType<TEntityTypeKeys, TEnumKeys, TComplexKeys>;
+  };
 };
 
 // 5. Action Types

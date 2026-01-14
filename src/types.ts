@@ -31,9 +31,12 @@ export type FlattenEntityType<
   Visited extends string = never
 > = ET extends Visited
   ? never // Circular reference protection
-  : S['entitytypes'][ET] extends { baseType?: infer Base }
+  : S['entitytypes'][ET] extends { baseType?: infer Base; properties: infer Props }
     ? Base extends keyof S['entitytypes'] & string
-      ? FlattenEntityType<S, Base, Visited | Extract<ET, string>> & Omit<S['entitytypes'][ET], 'baseType'>
+      ? {
+          baseType?: Base;
+          properties: FlattenEntityType<S, Base, Visited | Extract<ET, string>>['properties'] & Props;
+        }
       : S['entitytypes'][ET]
     : S['entitytypes'][ET];
 
@@ -57,18 +60,20 @@ export type EntitySetsForEntityType<
 // ============================================================================
 
 // Extract properties from entitytype (exclude navigations)
-export type ExtractProperties<ET extends EntityType<any, any, any>> = {
-  [K in keyof ET as ET[K] extends NavigationType<any> ? never : K]: ET[K];
+export type ExtractProperties<ET extends { properties: Record<string, any> }> = {
+  [K in keyof ET['properties'] as ET['properties'][K] extends NavigationType<any> ? never : K]: 
+    ET['properties'][K];
 };
 
 // Extract navigations from entitytype
 export type ExtractNavigations<ET extends EntityType<any, any, any>> = {
-  [K in keyof ET as ET[K] extends NavigationType<any> ? K : never]: ET[K] extends NavigationType<infer Target>
-    ? {
-        target: Target;
-        collection: ET[K] extends { collection: true } ? true : false;
-      }
-    : never;
+  [K in keyof ET['properties'] as ET['properties'][K] extends NavigationType<any> ? K : never]: 
+    ET['properties'][K] extends NavigationType<infer Target>
+      ? {
+          target: Target;
+          collection: ET['properties'][K] extends { collection: true } ? true : false;
+        }
+      : never;
 };
 
 // ============================================================================
@@ -202,12 +207,12 @@ export type EntitySetToQueryableEntity<
   ES extends keyof S['entitysets']
 > = {
   readonly properties: MapPropertiesToTS<
-    ExtractProperties<FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>>>,
+    ExtractProperties<FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>> & EntityType<any, any, any>>,
     S
   >;
   readonly navigations: {
-    readonly [K in keyof ExtractNavigations<FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>>>]: ExtractNavigations<
-      FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>>
+    readonly [K in keyof ExtractNavigations<FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>> & EntityType<any, any, any>>]: ExtractNavigations<
+      FlattenEntityType<S, EntityTypeNameFromEntitySet<S, ES>> & EntityType<any, any, any>
     >[K] extends { target: infer Target; collection: infer C }
       ? Target extends keyof S['entitytypes']
         ? EntitySetsForEntityType<S, Target> extends infer EntitySetKey
