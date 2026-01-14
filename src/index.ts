@@ -7,6 +7,10 @@ import type {
   QueryableEntity,
   EntitySetToQueryableEntity,
   EntitySetToQueryableEntity as ResolveEntitySet,
+  UnboundActionKeys,
+  UnboundFunctionKeys,
+  BoundActionKeysForEntitySet,
+  BoundFunctionKeysForEntitySet,
 } from './types';
 import { buildQueryableEntity } from './runtime';
 import type {
@@ -68,16 +72,16 @@ export class OdataClient<S extends Schema<S>> {
   /**
    * Access an entityset collection.
    */
-  entitysets<E extends EntitySetNames<S>>(entityset: E): CollectionOperation<S, EntitySetToQE<S, E>> {
+  entitysets<E extends EntitySetNames<S>>(entityset: E): CollectionOperation<S, EntitySetToQE<S, E>, E> {
     const entity = buildQueryableEntity(this.#schema, String(entityset)) as EntitySetToQE<S, E>;
-    return new CollectionOperation(this.#schema, entity, String(entityset), this.#options);
+    return new CollectionOperation(this.#schema, entity, entityset, String(entityset), this.#options);
   }
 
   /**
    * Execute an unbound global action.
    */
   async action<
-    A extends keyof NonNullable<S['actions']>
+    A extends UnboundActionKeys<S>
   >(
     name: A,
     payload: { parameters: OperationParameters<S, NonNullable<S['actions']>[A]['parameters']> }
@@ -90,7 +94,7 @@ export class OdataClient<S extends Schema<S>> {
    * Execute an unbound global function.
    */
   async function<
-    F extends keyof NonNullable<S['functions']>
+    F extends UnboundFunctionKeys<S>
   >(
     name: F,
     payload: { parameters: OperationParameters<S, NonNullable<S['functions']>[F]['parameters']> }
@@ -104,15 +108,17 @@ export class OdataClient<S extends Schema<S>> {
 // CollectionOperation
 // ============================================================================
 
-class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity> {
+class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E extends EntitySetNames<S> = EntitySetNames<S>> {
   #schema: S;
   #entityset: QE;
+  #entitysetName: E;
   #path: string;
   #options: OdataClientOptions;
 
-  constructor(schema: S, entityset: QE, path: string, options: OdataClientOptions) {
+  constructor(schema: S, entityset: QE, entitysetName: E, path: string, options: OdataClientOptions) {
     this.#schema = schema;
     this.#entityset = entityset;
+    this.#entitysetName = entitysetName;
     this.#path = path;
     this.#options = options;
   }
@@ -179,16 +185,16 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity> {
   /**
    * Access a single entity by key.
    */
-  key(key: string): SingleOperation<S, QE> {
+  key(key: string): SingleOperation<S, QE, E> {
     const newPath = `${this.#path}(${key})`;
-    return new SingleOperation(this.#schema, this.#entityset, newPath, this.#options);
+    return new SingleOperation(this.#schema, this.#entityset, this.#entitysetName, newPath, this.#options);
   }
 
   /**
    * Execute a bound action on the collection.
    */
   async action<
-    K extends keyof NonNullable<S['actions']>
+    K extends BoundActionKeysForEntitySet<S, E, 'collection'>
   >(
     name: K,
     payload: { parameters: OperationParameters<S, NonNullable<S['actions']>[K]['parameters']> }
@@ -201,7 +207,7 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity> {
    * Execute a bound function on the collection.
    */
   async function<
-    K extends keyof NonNullable<S['functions']>
+    K extends BoundFunctionKeysForEntitySet<S, E, 'collection'>
   >(
     name: K,
     payload: { parameters: OperationParameters<S, NonNullable<S['functions']>[K]['parameters']> }
@@ -215,15 +221,17 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity> {
 // SingleOperation
 // ============================================================================
 
-class SingleOperation<S extends Schema<S>, QE extends QueryableEntity> {
+class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends EntitySetNames<S> = EntitySetNames<S>> {
   #schema: S;
   #entityset: QE;
+  #entitysetName: E;
   #path: string;
   #options: OdataClientOptions;
 
-  constructor(schema: S, entityset: QE, path: string, options: OdataClientOptions) {
+  constructor(schema: S, entityset: QE, entitysetName: E, path: string, options: OdataClientOptions) {
     this.#schema = schema;
     this.#entityset = entityset;
+    this.#entitysetName = entitysetName;
     this.#path = path;
     this.#options = options;
   }
@@ -326,18 +334,18 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity> {
     if (actualTargetKey && actualTargetKey in this.#schema.entitysets) {
       const targetEntity = buildQueryableEntity(this.#schema, actualTargetKey) as ResolveEntitySet<S, typeof actualTargetKey>;
       if (navigation.collection) {
-        return new CollectionOperation(this.#schema, targetEntity, newPath, this.#options) as any;
+        return new CollectionOperation(this.#schema, targetEntity, actualTargetKey as any, newPath, this.#options) as any;
       } else {
-        return new SingleOperation(this.#schema, targetEntity, newPath, this.#options) as any;
+        return new SingleOperation(this.#schema, targetEntity, actualTargetKey as any, newPath, this.#options) as any;
       }
     }
     
     // Fallback for union types or invalid targets
     const fallbackEntity = buildQueryableEntity(this.#schema, actualTargetKey || '');
     if (navigation.collection) {
-      return new CollectionOperation(this.#schema, fallbackEntity, newPath, this.#options) as any;
+      return new CollectionOperation(this.#schema, fallbackEntity, actualTargetKey as any, newPath, this.#options) as any;
     } else {
-      return new SingleOperation(this.#schema, fallbackEntity, newPath, this.#options) as any;
+      return new SingleOperation(this.#schema, fallbackEntity, actualTargetKey as any, newPath, this.#options) as any;
     }
   }
 
@@ -345,7 +353,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity> {
    * Execute a bound action on the entity.
    */
   async action<
-    K extends keyof NonNullable<S['actions']>
+    K extends BoundActionKeysForEntitySet<S, E, 'entity'>
   >(
     name: K,
     payload: { parameters: OperationParameters<S, NonNullable<S['actions']>[K]['parameters']> }
@@ -358,7 +366,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity> {
    * Execute a bound function on the entity.
    */
   async function<
-    K extends keyof NonNullable<S['functions']>
+    K extends BoundFunctionKeysForEntitySet<S, E, 'entity'>
   >(
     name: K,
     payload: { parameters: OperationParameters<S, NonNullable<S['functions']>[K]['parameters']> }

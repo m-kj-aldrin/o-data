@@ -270,6 +270,54 @@ export type BoundOperationKeys<
 > = keyof BoundOperationsForEntity<Ops, Target, Scope>;
 
 // ============================================================================
+// Filter Unbound Operations
+// ============================================================================
+
+// Extract keys of unbound actions
+export type UnboundActionKeys<S extends Schema<S>> = {
+  [K in keyof NonNullable<S['actions']>]: 
+    NonNullable<S['actions']>[K] extends { type: 'unbound' } ? K : never
+}[keyof NonNullable<S['actions']>];
+
+// Extract keys of unbound functions
+export type UnboundFunctionKeys<S extends Schema<S>> = {
+  [K in keyof NonNullable<S['functions']>]: 
+    NonNullable<S['functions']>[K] extends { type: 'unbound' } ? K : never
+}[keyof NonNullable<S['functions']>];
+
+// ============================================================================
+// Filter Bound Operations for EntitySet
+// ============================================================================
+
+// Extract keys of bound actions for a specific entityset and scope
+export type BoundActionKeysForEntitySet<
+  S extends Schema<S>,
+  ES extends keyof S['entitysets'],
+  Scope extends 'entity' | 'collection'
+> = {
+  [K in keyof NonNullable<S['actions']>]: 
+    NonNullable<S['actions']>[K] extends { 
+      type: 'bound'; 
+      target: EntityTypeNameFromEntitySet<S, ES>; 
+      collection: Scope extends 'collection' ? true : false 
+    } ? K : never
+}[keyof NonNullable<S['actions']>];
+
+// Extract keys of bound functions for a specific entityset and scope
+export type BoundFunctionKeysForEntitySet<
+  S extends Schema<S>,
+  ES extends keyof S['entitysets'],
+  Scope extends 'entity' | 'collection'
+> = {
+  [K in keyof NonNullable<S['functions']>]: 
+    NonNullable<S['functions']>[K] extends { 
+      type: 'bound'; 
+      target: EntityTypeNameFromEntitySet<S, ES>; 
+      collection: Scope extends 'collection' ? true : false 
+    } ? K : never
+}[keyof NonNullable<S['functions']>];
+
+// ============================================================================
 // Helper Types
 // ============================================================================
 
