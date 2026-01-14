@@ -608,6 +608,29 @@ async function main() {
   // Resolve dependencies again after operations
   resolveComplexDependencies();
 
+  // Additional sweep: Re-extract dependencies from all included EntityTypes
+  // This ensures we capture complex types that might have been missed
+  // (e.g., complex types only referenced in properties of EntityTypes
+  // that were added during operation dependency resolution)
+  for (const entityTypeFQN of includedEntityTypes) {
+    const entityType = entityTypes.get(entityTypeFQN);
+    if (!entityType) continue;
+
+    // Extract dependencies from regular properties
+    if (entityType.Property) {
+      for (const prop of entityType.Property) {
+        if (isExcluded(prop['@_Name'], 'properties')) continue;
+        extractTypeDependencies(prop['@_Type'], false);
+      }
+    }
+
+    // Note: Navigation properties don't typically have complex type dependencies
+    // but we've already processed them in Phase 1
+  }
+
+  // Final dependency resolution after the sweep
+  resolveComplexDependencies();
+
   // --------------------------------------------------------------------------
   // Phase 3: Code Generation
   // --------------------------------------------------------------------------
@@ -888,7 +911,19 @@ async function main() {
 
   if (allActions.length > 0) {
     out += `  actions: {\n`;
+    const seenActionNames = new Set<string>();
     for (const op of allActions) {
+      const name = op.def['@_Name'];
+      // TODO: OData supports operation overloading where the same operation name
+      // can be bound to different entity types. Currently we only keep the first
+      // occurrence to avoid duplicate keys in the generated schema object.
+      // In the future, we should support overloading by changing how operations
+      // are keyed (e.g., using a composite key like "${name}_${bindingType}" or
+      // restructuring to support multiple operations with the same name).
+      if (seenActionNames.has(name)) {
+        continue; // Skip duplicate - keep only first occurrence
+      }
+      seenActionNames.add(name);
       out += generateOperationCode(op, !op.isBound);
     }
     out += `  },\n`;
@@ -903,7 +938,19 @@ async function main() {
 
   if (allFunctions.length > 0) {
     out += `  functions: {\n`;
+    const seenFunctionNames = new Set<string>();
     for (const op of allFunctions) {
+      const name = op.def['@_Name'];
+      // TODO: OData supports operation overloading where the same operation name
+      // can be bound to different entity types. Currently we only keep the first
+      // occurrence to avoid duplicate keys in the generated schema object.
+      // In the future, we should support overloading by changing how operations
+      // are keyed (e.g., using a composite key like "${name}_${bindingType}" or
+      // restructuring to support multiple operations with the same name).
+      if (seenFunctionNames.has(name)) {
+        continue; // Skip duplicate - keep only first occurrence
+      }
+      seenFunctionNames.add(name);
       out += generateOperationCode(op, !op.isBound);
     }
     out += `  },\n`;
