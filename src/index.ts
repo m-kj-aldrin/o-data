@@ -29,7 +29,7 @@ import type {
   SingleQueryObject,
   QueryOperationOptions,
 } from './query';
-import { buildQueryString, buildCreateRequest, buildUpdateRequest } from './serialization';
+import { buildQueryString, buildCreateRequest, buildUpdateRequest, buildActionRequest, buildFunctionRequest } from './serialization';
 import type {
   CreateObject,
   UpdateObject,
@@ -96,8 +96,71 @@ export class OdataClient<S extends Schema<S>> {
     S, 
     NonNullable<S['actions']>[ResolveActionFromImport<S, A>]['returnType']
   >> {
-    // TODO: Implement action execution
-    throw new Error('Not implemented');
+    // Resolve import name to action name
+    type ActionName = ResolveActionFromImport<S, A>;
+    const actionName = (this.#schema.actionImports?.[name as string] as { action: string })?.action as string;
+    
+    if (!actionName || !this.#schema.actions || !(actionName in this.#schema.actions)) {
+      throw new Error(`Action '${String(name)}' not found`);
+    }
+    
+    const actionDef = this.#schema.actions[actionName];
+    const parameterDefs = actionDef.parameters;
+    const namespace = this.#schema.namespace || '';
+
+    const request = buildActionRequest(
+      '',
+      namespace,
+      String(name), // Use import name, not resolved action name
+      payload.parameters,
+      parameterDefs,
+      this.#schema,
+      this.#options.baseUrl,
+      false // Unbound actions use import name, not FQN
+    );
+    
+    const response = await this.#options.transport(request);
+
+    if (!response.ok) {
+      let error: any;
+      try {
+        error = await response.json();
+      } catch {
+        error = await response.text();
+      }
+      return {
+        ok: false,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        result: { error },
+      } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
+    }
+
+    if (response.status === 204) {
+      return {
+        ok: true,
+        status: 204,
+        statusText: response.statusText,
+        headers: response.headers,
+        result: {
+          data: undefined,
+        },
+      } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
+    }
+
+    const json = await response.json();
+    const { value, ...odataProps } = json;
+    return {
+      ok: true,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      result: {
+        data: value !== undefined ? value : json,
+        ...odataProps,  // @odata.context, etc.
+      },
+    } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
   }
 
   /**
@@ -117,8 +180,67 @@ export class OdataClient<S extends Schema<S>> {
     S, 
     NonNullable<S['functions']>[ResolveFunctionFromImport<S, F>]['returnType']
   >> {
-    // TODO: Implement function execution
-    throw new Error('Not implemented');
+    // Resolve import name to function name
+    type FunctionName = ResolveFunctionFromImport<S, F>;
+    const functionName = (this.#schema.functionImports?.[name as string] as { function: string })?.function as string;
+    
+    if (!functionName || !this.#schema.functions || !(functionName in this.#schema.functions)) {
+      throw new Error(`Function '${String(name)}' not found`);
+    }
+    
+    const namespace = this.#schema.namespace || '';
+
+    const request = buildFunctionRequest(
+      '',
+      namespace,
+      String(name), // Use import name, not resolved function name
+      payload.parameters,
+      this.#options.baseUrl,
+      false // Unbound functions use import name, not FQN
+    );
+    
+    const response = await this.#options.transport(request);
+
+    if (!response.ok) {
+      let error: any;
+      try {
+        error = await response.json();
+      } catch {
+        error = await response.text();
+      }
+      return {
+        ok: false,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        result: { error },
+      } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
+    }
+
+    const json = await response.json();
+    const { value, ...odataProps } = json;
+    if (value !== undefined) {
+      return {
+        ok: true,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        result: {
+          data: value,
+          ...odataProps,  // @odata.context, etc.
+        },
+      } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
+    }
+    return {
+      ok: true,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      result: {
+        data: json,
+        ...odataProps,  // @odata.context, etc.
+      },
+    } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
   }
 }
 
@@ -376,8 +498,67 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
     name: K,
     payload: { parameters: OperationParameters<S, NonNullable<S['actions']>[K]['parameters']> }
   ): Promise<ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>> {
-    // TODO: Implement bound action execution - filter by target and scope at runtime
-    throw new Error('Not implemented');
+    if (!this.#schema.actions || !(name in this.#schema.actions)) {
+      throw new Error(`Action '${String(name)}' not found`);
+    }
+    
+    const actionDef = this.#schema.actions[name];
+    const parameterDefs = actionDef.parameters;
+    const namespace = this.#schema.namespace || '';
+
+    const request = buildActionRequest(
+      this.#path,
+      namespace,
+      String(name), // Use action name, not import name
+      payload.parameters,
+      parameterDefs,
+      this.#schema,
+      this.#options.baseUrl,
+      true // Bound actions always use FQN
+    );
+    
+    const response = await this.#options.transport(request);
+
+    if (!response.ok) {
+      let error: any;
+      try {
+        error = await response.json();
+      } catch {
+        error = await response.text();
+      }
+      return {
+        ok: false,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        result: { error },
+      } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
+    }
+
+    if (response.status === 204) {
+      return {
+        ok: true,
+        status: 204,
+        statusText: response.statusText,
+        headers: response.headers,
+        result: {
+          data: undefined,
+        },
+      } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
+    }
+
+    const json = await response.json();
+    const { value, ...odataProps } = json;
+    return {
+      ok: true,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      result: {
+        data: value !== undefined ? value : json,
+        ...odataProps,  // @odata.context, etc.
+      },
+    } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
   }
 
   /**
@@ -389,7 +570,62 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
     name: K,
     payload: { parameters: OperationParameters<S, NonNullable<S['functions']>[K]['parameters']> }
   ): Promise<FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>> {
-    // TODO: Implement bound function execution - filter by target and scope at runtime
-    throw new Error('Not implemented');
+    if (!this.#schema.functions || !(name in this.#schema.functions)) {
+      throw new Error(`Function '${String(name)}' not found`);
+    }
+    
+    const namespace = this.#schema.namespace || '';
+
+    const request = buildFunctionRequest(
+      this.#path,
+      namespace,
+      String(name), // Use function name, not import name
+      payload.parameters,
+      this.#options.baseUrl,
+      true // Bound functions always use FQN
+    );
+    
+    const response = await this.#options.transport(request);
+
+    if (!response.ok) {
+      let error: any;
+      try {
+        error = await response.json();
+      } catch {
+        error = await response.text();
+      }
+      return {
+        ok: false,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        result: { error },
+      } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
+    }
+
+    const json = await response.json();
+    const { value, ...odataProps } = json;
+    if (value !== undefined) {
+      return {
+        ok: true,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        result: {
+          data: value,
+          ...odataProps,  // @odata.context, etc.
+        },
+      } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
+    }
+    return {
+      ok: true,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      result: {
+        data: json,
+        ...odataProps,  // @odata.context, etc.
+      },
+    } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
   }
 }

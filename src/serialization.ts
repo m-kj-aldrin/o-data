@@ -6,7 +6,7 @@ import type { QueryableEntity } from './types';
 import type { CollectionQueryObject, SingleQueryObject, SingleExpandObject } from './query';
 import { createFilterHelpers, serializeFilter } from './filter';
 import { buildQueryableEntity } from './runtime';
-import type { Schema } from './schema';
+import type { Schema, ODataType } from './schema';
 import type { CreateObject, UpdateObject, CreateOperationOptions, UpdateOperationOptions } from './operations';
 
 // ============================================================================
@@ -454,4 +454,85 @@ export function buildUpdateRequest<S extends Schema<S>>(
   
   const transformedObject = transformUpdateObjectForBind(updateObject, entityDef, schema);
   return new Request(url, { method: 'PATCH', headers, body: JSON.stringify(transformedObject) });
+}
+
+// ============================================================================
+// Action/Function Request Serialization
+// ============================================================================
+
+/**
+ * Build a POST request for an OData action.
+ */
+export function buildActionRequest<S extends Schema<S>>(
+  path: string,
+  namespace: string,
+  actionName: string,
+  parameters: Record<string, any>,
+  parameterDefs: Record<string, ODataType<any>>,
+  schema: S,
+  baseUrl: string = '',
+  useFQN: boolean = true
+): Request {
+  const fullActionName = useFQN ? `${namespace}.${actionName}` : actionName;
+  const url = normalizePath(baseUrl, path, fullActionName);
+
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  });
+
+  // Transform parameters - handle entity parameters for deep inserts/binds
+  // For now, pass through parameters as-is. Entity parameter transformation
+  // can be added later if needed (similar to transformCreateObjectForBind)
+  const transformedParams = parameters;
+
+  return new Request(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(transformedParams),
+  });
+}
+
+/**
+ * Build a GET request for an OData function.
+ */
+export function buildFunctionRequest<S extends Schema<S>>(
+  path: string,
+  namespace: string,
+  functionName: string,
+  parameters: Record<string, any>,
+  baseUrl: string = '',
+  useFQN: boolean = true
+): Request {
+  const fullFuncName = useFQN ? `${namespace}.${functionName}` : functionName;
+  const paramKeys = Object.keys(parameters);
+  let urlParamsStr = '';
+  const queryParams: string[] = [];
+
+  if (paramKeys.length > 0) {
+    urlParamsStr = '(' + paramKeys.map((k) => `${k}=@${k}`).join(',') + ')';
+    for (const [key, value] of Object.entries(parameters)) {
+      let serializedValue: string;
+      if (typeof value === 'string') {
+        serializedValue = `'${value}'`;
+      } else if (value instanceof Date) {
+        serializedValue = value.toISOString();
+      } else if (typeof value === 'object' && value !== null) {
+        serializedValue = JSON.stringify(value);
+      } else {
+        serializedValue = String(value);
+      }
+      queryParams.push(`@${key}=${encodeURIComponent(serializedValue)}`);
+    }
+  }
+
+  let url = normalizePath(baseUrl, path, fullFuncName + urlParamsStr);
+  if (queryParams.length > 0) {
+    url += '?' + queryParams.join('&');
+  }
+
+  return new Request(url, {
+    method: 'GET',
+    headers: new Headers({ Accept: 'application/json' }),
+  });
 }
