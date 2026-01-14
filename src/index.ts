@@ -9,6 +9,8 @@ import type {
   EntitySetToQueryableEntity as ResolveEntitySet,
   ImportedActionKeys,
   ImportedFunctionKeys,
+  ResolveActionFromImport,
+  ResolveFunctionFromImport,
   BoundActionKeysForEntitySet,
   BoundFunctionKeysForEntitySet,
 } from './types';
@@ -84,8 +86,16 @@ export class OdataClient<S extends Schema<S>> {
     A extends ImportedActionKeys<S>
   >(
     name: A,
-    payload: { parameters: OperationParameters<S, NonNullable<S['actions']>[A]['parameters']> }
-  ): Promise<ActionResponse<S, NonNullable<S['actions']>[A]['returnType']>> {
+    payload: { 
+      parameters: OperationParameters<
+        S, 
+        NonNullable<S['actions']>[ResolveActionFromImport<S, A>]['parameters']
+      >
+    }
+  ): Promise<ActionResponse<
+    S, 
+    NonNullable<S['actions']>[ResolveActionFromImport<S, A>]['returnType']
+  >> {
     // TODO: Implement action execution
     throw new Error('Not implemented');
   }
@@ -97,8 +107,16 @@ export class OdataClient<S extends Schema<S>> {
     F extends ImportedFunctionKeys<S>
   >(
     name: F,
-    payload: { parameters: OperationParameters<S, NonNullable<S['functions']>[F]['parameters']> }
-  ): Promise<FunctionResponse<S, NonNullable<S['functions']>[F]['returnType']>> {
+    payload: { 
+      parameters: OperationParameters<
+        S, 
+        NonNullable<S['functions']>[ResolveFunctionFromImport<S, F>]['parameters']
+      >
+    }
+  ): Promise<FunctionResponse<
+    S, 
+    NonNullable<S['functions']>[ResolveFunctionFromImport<S, F>]['returnType']
+  >> {
     // TODO: Implement function execution
     throw new Error('Not implemented');
   }

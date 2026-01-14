@@ -285,31 +285,41 @@ export type UnboundFunctionKeys<S extends Schema<S>> = {
     NonNullable<S['functions']>[K] extends { type: 'unbound' } ? K : never
 }[keyof NonNullable<S['functions']>];
 
-// Extract action keys from actionImports (only imported unbound actions are exposed)
+// Extract action import keys (public names) from actionImports
 export type ImportedActionKeys<S extends Schema<S>> = 
   S['actionImports'] extends Record<string, any>
-    ? {
-        [K in keyof S['actionImports']]: 
-          S['actionImports'][K] extends { action: infer A }
-            ? A extends string
-              ? A
-              : never
-            : never
-      }[keyof S['actionImports']]
+    ? Extract<keyof S['actionImports'], string>
     : never;
 
-// Extract function keys from functionImports (only imported unbound functions are exposed)
+// Extract function import keys (public names) from functionImports
 export type ImportedFunctionKeys<S extends Schema<S>> = 
   S['functionImports'] extends Record<string, any>
-    ? {
-        [K in keyof S['functionImports']]: 
-          S['functionImports'][K] extends { function: infer F }
-            ? F extends string
-              ? F
-              : never
-            : never
-      }[keyof S['functionImports']]
+    ? Extract<keyof S['functionImports'], string>
     : never;
+
+// Resolve import name to action name
+export type ResolveActionFromImport<
+  S extends Schema<S>,
+  ImportName extends string
+> = ImportName extends keyof NonNullable<S['actionImports']>
+  ? NonNullable<S['actionImports']>[ImportName] extends { action: infer A }
+    ? A extends string
+      ? A
+      : never
+    : never
+  : never;
+
+// Resolve import name to function name
+export type ResolveFunctionFromImport<
+  S extends Schema<S>,
+  ImportName extends string
+> = ImportName extends keyof NonNullable<S['functionImports']>
+  ? NonNullable<S['functionImports']>[ImportName] extends { function: infer F }
+    ? F extends string
+      ? F
+      : never
+    : never
+  : never;
 
 // ============================================================================
 // Filter Bound Operations for EntitySet
