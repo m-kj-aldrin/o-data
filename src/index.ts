@@ -7,8 +7,8 @@ import type {
   QueryableEntity,
   EntitySetToQueryableEntity,
   EntitySetToQueryableEntity as ResolveEntitySet,
-  UnboundActionKeys,
-  UnboundFunctionKeys,
+  ImportedActionKeys,
+  ImportedFunctionKeys,
   BoundActionKeysForEntitySet,
   BoundFunctionKeysForEntitySet,
 } from './types';
@@ -81,7 +81,7 @@ export class OdataClient<S extends Schema<S>> {
    * Execute an unbound global action.
    */
   async action<
-    A extends UnboundActionKeys<S>
+    A extends ImportedActionKeys<S>
   >(
     name: A,
     payload: { parameters: OperationParameters<S, NonNullable<S['actions']>[A]['parameters']> }
@@ -94,7 +94,7 @@ export class OdataClient<S extends Schema<S>> {
    * Execute an unbound global function.
    */
   async function<
-    F extends UnboundFunctionKeys<S>
+    F extends ImportedFunctionKeys<S>
   >(
     name: F,
     payload: { parameters: OperationParameters<S, NonNullable<S['functions']>[F]['parameters']> }
