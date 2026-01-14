@@ -128,7 +128,7 @@ type ComplexTypeToTS<
     : any; // Fallback if complex type not found
 
 // Main ODataType mapper - handles collections, nullable, and dispatches to specific mappers
-type ODataTypeToTS<
+export type ODataTypeToTS<
   T extends ODataType<any, any, any>,
   S extends Schema<S>,
   Visited extends string = never

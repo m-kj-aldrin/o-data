@@ -2,7 +2,7 @@
 // Operation Types
 // ============================================================================
 
-import type { QueryableEntity } from './types';
+import type { QueryableEntity, ODataTypeToTS } from './types';
 import type { Schema, ODataType } from './schema';
 
 // ============================================================================
@@ -144,7 +144,38 @@ export type UpdateOperationOptions<QE extends QueryableEntity> = {
   headers?: Record<string, string>;
 };
 
-// Operation parameters - convert ODataType to TypeScript types
-export type OperationParameters<S extends Schema<S>, P extends Record<string, ODataType<any>>> = {
-  [K in keyof P]: any; // Will be properly typed later based on ODataType
+// ============================================================================
+// Operation Parameters
+// ============================================================================
+
+// Map each parameter using ODataTypeToTS
+type MappedParameters<
+  S extends Schema<S>,
+  P extends Record<string, ODataType<any>>
+> = {
+  [K in keyof P]: ODataTypeToTS<P[K], S>;
 };
+
+// Required parameters (non-nullable)
+type RequiredOperationParameters<
+  S extends Schema<S>,
+  P extends Record<string, ODataType<any>>
+> = {
+  [K in keyof MappedParameters<S, P> as IsNullable<MappedParameters<S, P>[K]> extends true ? never : K]: 
+    MappedParameters<S, P>[K];
+};
+
+// Optional parameters (nullable)
+type OptionalOperationParameters<
+  S extends Schema<S>,
+  P extends Record<string, ODataType<any>>
+> = {
+  [K in keyof MappedParameters<S, P> as IsNullable<MappedParameters<S, P>[K]> extends true ? K : never]?: 
+    MappedParameters<S, P>[K];
+};
+
+// Operation parameters - convert ODataType to TypeScript types
+export type OperationParameters<
+  S extends Schema<S>,
+  P extends Record<string, ODataType<any>>
+> = RequiredOperationParameters<S, P> & OptionalOperationParameters<S, P>;
