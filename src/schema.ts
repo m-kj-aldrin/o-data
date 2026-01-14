@@ -159,6 +159,29 @@ export type FunctionImport<TFunctionKeys extends string> = {
   function: TFunctionKeys;
 };
 
+// 7a. Helper Types for Filtering Unbound Operations
+// Extract only unbound action keys from raw schema type T
+type UnboundActionKeysFromRaw<T extends { actions?: Record<string, any> }> = 
+  'actions' extends keyof T
+    ? T['actions'] extends Record<string, any>
+      ? {
+          [K in keyof T['actions']]: 
+            T['actions'][K] extends { type: 'unbound' } ? K : never
+        }[keyof T['actions']]
+      : never
+    : never;
+
+// Extract only unbound function keys from raw schema type T
+type UnboundFunctionKeysFromRaw<T extends { functions?: Record<string, any> }> = 
+  'functions' extends keyof T
+    ? T['functions'] extends Record<string, any>
+      ? {
+          [K in keyof T['functions']]: 
+            T['functions'][K] extends { type: 'unbound' } ? K : never
+        }[keyof T['functions']]
+      : never
+    : never;
+
 // 8. Schema Interface
 export interface Schema<
   T extends {
@@ -199,10 +222,10 @@ export interface Schema<
   actions?: { [key: string]: Action<Extract<keyof T['entitytypes'], string>> };
   functions?: { [key: string]: Function<Extract<keyof T['entitytypes'], string>> };
   actionImports?: T['actions'] extends Record<string, any>
-    ? { [key: string]: ActionImport<Extract<keyof T['actions'], string>> }
+    ? { [key: string]: ActionImport<Extract<UnboundActionKeysFromRaw<T>, string>> }
     : never;
   functionImports?: T['functions'] extends Record<string, any>
-    ? { [key: string]: FunctionImport<Extract<keyof T['functions'], string>> }
+    ? { [key: string]: FunctionImport<Extract<UnboundFunctionKeysFromRaw<T>, string>> }
     : never;
 }
 
