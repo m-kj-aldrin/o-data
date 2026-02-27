@@ -1,8 +1,37 @@
-import type { QueryableEntity, PropertyTypeToTS, PropertyDef } from './schema';
-
 // ============================================================================
 // Filter Types
 // ============================================================================
+
+import type { QueryableEntity, EntitySetToQueryableEntity } from './types';
+import type { Schema } from './schema';
+import { buildQueryableEntity } from './runtime';
+
+// Helper to resolve navigation target QueryableEntity from targetEntitysetKey
+type ResolveNavTarget<
+  S extends Schema<S>,
+  Nav extends { targetEntitysetKey: string | string[] }
+> = Nav['targetEntitysetKey'] extends infer TargetKey
+  ? TargetKey extends string
+    ? TargetKey extends keyof S['entitysets']
+      ? EntitySetToQueryableEntity<S, TargetKey>
+      : QueryableEntity
+    : QueryableEntity
+  : QueryableEntity;
+
+// Helper to extract target entityset key from navigation
+type NavTargetKey<TEntity extends QueryableEntity, N extends keyof TEntity['navigations']> = 
+  TEntity['navigations'][N]['targetEntitysetKey'];
+
+// Helper to resolve navigation target QueryableEntity
+type ResolveNavTargetQE<
+  S extends Schema<S>,
+  TEntity extends QueryableEntity,
+  N extends keyof TEntity['navigations']
+> = NavTargetKey<TEntity, N> extends string
+  ? NavTargetKey<TEntity, N> extends keyof S['entitysets']
+    ? EntitySetToQueryableEntity<S, NavTargetKey<TEntity, N>>
+    : QueryableEntity
+  : QueryableEntity;
 
 export type ComparisonOperator =
   | 'eq'
@@ -16,14 +45,14 @@ export type ComparisonOperator =
   | 'endswith'
   | 'in';
 
-// REMOVED: NavPropPath (Complex recursive type causing performance issues)
-
 export type FilterableProperty<TEntity extends QueryableEntity> = keyof TEntity['properties'];
 
+// For now, property values are typed as any since QueryableEntity properties are any
+// This can be improved later with proper PropertyTypeToTS conversion
 export type FilterPropertyValueType<
   TEntity extends QueryableEntity,
   P extends FilterableProperty<TEntity>
-> = PropertyTypeToTS<TEntity['properties'][P]>;
+> = any;
 
 export type CollectionNavKeys<TEntity extends QueryableEntity> = {
   [K in keyof TEntity['navigations']]: TEntity['navigations'][K]['collection'] extends true
@@ -43,7 +72,7 @@ export interface FilterBuilder<TEntity extends QueryableEntity> {
   __brand: 'FilterBuilder';
 }
 
-export interface FilterHelpers<TEntity extends QueryableEntity> {
+export interface FilterHelpers<TEntity extends QueryableEntity, S extends Schema<S> = Schema<any>> {
   /**
    * Filter on a simple scalar property of the current entity.
    */
@@ -56,13 +85,12 @@ export interface FilterHelpers<TEntity extends QueryableEntity> {
   /**
    * Filter on a Single-Valued Navigation Property (Lookup).
    * This allows "stepping into" a related entity to filter on its properties.
-   * Example: h.nav('customerid_account', h => h.clause('name', 'eq', 'Acme'))
    */
   nav: <N extends SingleNavKeys<TEntity>>(
     nav: N,
     cb: (
-      h: FilterHelpers<TEntity['navigations'][N]['target']>
-    ) => FilterBuilder<TEntity['navigations'][N]['target']>
+      h: FilterHelpers<ResolveNavTargetQE<S, TEntity, N>, S>
+    ) => FilterBuilder<ResolveNavTargetQE<S, TEntity, N>>
   ) => FilterBuilder<TEntity>;
 
   /**
@@ -71,8 +99,8 @@ export interface FilterHelpers<TEntity extends QueryableEntity> {
   any: <N extends CollectionNavKeys<TEntity>>(
     nav: N,
     cb: (
-      h: FilterHelpers<TEntity['navigations'][N]['target']>
-    ) => FilterBuilder<TEntity['navigations'][N]['target']>
+      h: FilterHelpers<ResolveNavTargetQE<S, TEntity, N>, S>
+    ) => FilterBuilder<ResolveNavTargetQE<S, TEntity, N>>
   ) => FilterBuilder<TEntity>;
 
   /**
@@ -81,13 +109,13 @@ export interface FilterHelpers<TEntity extends QueryableEntity> {
   all: <N extends CollectionNavKeys<TEntity>>(
     nav: N,
     cb: (
-      h: FilterHelpers<TEntity['navigations'][N]['target']>
-    ) => FilterBuilder<TEntity['navigations'][N]['target']>
+      h: FilterHelpers<ResolveNavTargetQE<S, TEntity, N>, S>
+    ) => FilterBuilder<ResolveNavTargetQE<S, TEntity, N>>
   ) => FilterBuilder<TEntity>;
 }
 
 // ============================================================================
-// Filter Builder Implementation
+// Filter Builder Runtime Implementation
 // ============================================================================
 
 class FilterBuilderImpl<TEntity extends QueryableEntity> implements FilterBuilder<TEntity> {
@@ -108,9 +136,10 @@ class FilterBuilderImpl<TEntity extends QueryableEntity> implements FilterBuilde
   __brand: 'FilterBuilder' = 'FilterBuilder' as const;
 }
 
-export function createFilterHelpers<TEntity extends QueryableEntity>(
-  entityDef: TEntity
-): FilterHelpers<TEntity> {
+export function createFilterHelpers<TEntity extends QueryableEntity, S extends Schema<S> = Schema<any>>(
+  entityDef: TEntity,
+  schema?: S
+): FilterHelpers<TEntity, S> {
   const clause = <P extends FilterableProperty<TEntity>>(
     property: P,
     operator: ComparisonOperator,
@@ -123,16 +152,7 @@ export function createFilterHelpers<TEntity extends QueryableEntity>(
   const prependPathToState = (state: any[], prefix: string): any[] => {
     return state.map((item) => {
       if (Array.isArray(item)) {
-        // Recursively handle nested groups or clauses
-        // A clause is roughly identifiable if it looks like [prop, op, val] where op is a known string
-        // But simpler: just recurse arrays. If it's a clause [p, op, v], p is index 0.
-        // We need to distinguish a Clause array from a Group array.
-        // In this impl:
-        // Clause: [string, string, any]
-        // Group/State: [Clause | 'and' | Group ...]
-
-        // Heuristic: If it's a Clause tuple (length 3, index 1 is operator)
-        // Operators are specific strings.
+        // Check if it's a clause tuple [property, operator, value]
         const ops = [
           'eq',
           'ne',
@@ -156,7 +176,7 @@ export function createFilterHelpers<TEntity extends QueryableEntity>(
           return prependPathToState(item, prefix);
         }
       } else if (typeof item === 'object' && item !== null && item.kind === 'lambda') {
-        // Update lambda navigation path: { kind: 'lambda', nav: '...', ... }
+        // Update lambda navigation path
         return { ...item, nav: `${prefix}/${item.nav}` };
       }
       return item;
@@ -166,16 +186,22 @@ export function createFilterHelpers<TEntity extends QueryableEntity>(
   const nav = <N extends SingleNavKeys<TEntity>>(
     navKey: N,
     cb: (
-      h: FilterHelpers<TEntity['navigations'][N]['target']>
-    ) => FilterBuilder<TEntity['navigations'][N]['target']>
+      h: FilterHelpers<ResolveNavTargetQE<S, TEntity, N>, S>
+    ) => FilterBuilder<ResolveNavTargetQE<S, TEntity, N>>
   ): FilterBuilder<TEntity> => {
     const navDef = entityDef.navigations[navKey as keyof typeof entityDef.navigations];
     if (!navDef) {
       throw new Error(`Navigation ${String(navKey)} not found`);
     }
 
-    const targetEntity = navDef.target;
-    const innerHelpers = createFilterHelpers(targetEntity);
+    // At runtime, target is a string (entitytype name), need to resolve to QueryableEntity
+    if (!schema) {
+      throw new Error('Schema required for navigation filters');
+    }
+    const targetEntitytypeName = navDef.target as string;
+    const targetEntitysetKey = navDef.targetEntitysetKey;
+    const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+    const innerHelpers = createFilterHelpers(targetEntity, schema);
     const innerBuilder = cb(innerHelpers);
 
     // Transform the inner state by prepending the navigation key
@@ -188,15 +214,19 @@ export function createFilterHelpers<TEntity extends QueryableEntity>(
   const any = <N extends CollectionNavKeys<TEntity>>(
     nav: N,
     cb: (
-      h: FilterHelpers<TEntity['navigations'][N]['target']>
-    ) => FilterBuilder<TEntity['navigations'][N]['target']>
+      h: FilterHelpers<ResolveNavTargetQE<S, TEntity, N>, S>
+    ) => FilterBuilder<ResolveNavTargetQE<S, TEntity, N>>
   ): FilterBuilder<TEntity> => {
     const navDef = entityDef.navigations[nav as keyof typeof entityDef.navigations];
     if (!navDef) {
       throw new Error(`Navigation ${String(nav)} not found`);
     }
-    const targetEntity = navDef.target;
-    const innerHelpers = createFilterHelpers(targetEntity);
+    if (!schema) {
+      throw new Error('Schema required for navigation filters');
+    }
+    const targetEntitysetKey = navDef.targetEntitysetKey;
+    const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+    const innerHelpers = createFilterHelpers(targetEntity, schema);
     const innerBuilder = cb(innerHelpers);
     const lambdaState = {
       kind: 'lambda',
@@ -210,15 +240,19 @@ export function createFilterHelpers<TEntity extends QueryableEntity>(
   const all = <N extends CollectionNavKeys<TEntity>>(
     nav: N,
     cb: (
-      h: FilterHelpers<TEntity['navigations'][N]['target']>
-    ) => FilterBuilder<TEntity['navigations'][N]['target']>
+      h: FilterHelpers<ResolveNavTargetQE<S, TEntity, N>, S>
+    ) => FilterBuilder<ResolveNavTargetQE<S, TEntity, N>>
   ): FilterBuilder<TEntity> => {
     const navDef = entityDef.navigations[nav as keyof typeof entityDef.navigations];
     if (!navDef) {
       throw new Error(`Navigation ${String(nav)} not found`);
     }
-    const targetEntity = navDef.target;
-    const innerHelpers = createFilterHelpers(targetEntity);
+    if (!schema) {
+      throw new Error('Schema required for navigation filters');
+    }
+    const targetEntitysetKey = navDef.targetEntitysetKey;
+    const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+    const innerHelpers = createFilterHelpers(targetEntity, schema);
     const innerBuilder = cb(innerHelpers);
     const lambdaState = {
       kind: 'lambda',
@@ -236,11 +270,12 @@ export function createFilterHelpers<TEntity extends QueryableEntity>(
 // Filter Serialization
 // ============================================================================
 
-export function serializeFilter(
+export function serializeFilter<S extends Schema<S> = Schema<any>>(
   filterState: any[],
   depth = 0,
   lambdaVar?: string,
-  entityDef?: QueryableEntity
+  entityDef?: QueryableEntity,
+  schema?: S
 ): string {
   if (filterState.length === 0) {
     return '';
@@ -250,23 +285,24 @@ export function serializeFilter(
   if (
     filterState.length === 1 &&
     typeof filterState[0] === 'object' &&
+    filterState[0] !== null &&
     filterState[0].kind === 'lambda'
   ) {
     const lambda = filterState[0];
     const varName = lambdaVar || `p${depth}`;
     let lambdaEntityDef: QueryableEntity | undefined;
     if (entityDef && lambda.nav in entityDef.navigations) {
-      // Note: lambda.nav might be a path now (e.g. A/B/C)
-      // Resolving nested definitions for validation is complex without full schema traversal.
-      // We accept loose typing here or could implement path walking if strict validation is required.
-      // For now, we skip deep validation for nested paths to keep it simple.
+      // For lambda navigation, we need to resolve the target entity
+      // The nav might be a path (e.g., A/B/C), so we take the first part
       const firstPart = lambda.nav.split('/')[0];
       const nav = entityDef.navigations[firstPart as keyof typeof entityDef.navigations];
-      if (nav && 'target' in nav && typeof nav.target === 'object') {
-        lambdaEntityDef = nav.target as QueryableEntity;
+      if (nav) {
+        // At runtime, target is a string, but we don't have schema here
+        // We'll pass undefined and let serializeClause handle it
+        lambdaEntityDef = undefined;
       }
     }
-    const predicate = serializeFilter(lambda.predicate, depth + 1, varName, lambdaEntityDef);
+    const predicate = serializeFilter(lambda.predicate, depth + 1, varName, lambdaEntityDef, schema);
     return `${lambda.nav}/${lambda.op}(${varName}:${predicate})`;
   }
 
@@ -274,7 +310,7 @@ export function serializeFilter(
   if (filterState.length === 3 && typeof filterState[0] === 'string') {
     const [property, operator, value] = filterState;
     const qualifiedProperty = lambdaVar ? `${lambdaVar}/${property}` : property;
-    return serializeClause(qualifiedProperty, operator, value, entityDef, property);
+    return serializeClause(qualifiedProperty, operator, value, entityDef, property, schema);
   }
 
   // Handle logical operators
@@ -291,7 +327,8 @@ export function serializeFilter(
           Array.isArray(filterState[i]) ? filterState[i] : [filterState[i]],
           depth,
           lambdaVar,
-          entityDef
+          entityDef,
+          schema
         );
         result = `(${result}) ${operator} (${right})`;
       }
@@ -300,7 +337,8 @@ export function serializeFilter(
         Array.isArray(part) ? part : [part],
         depth,
         lambdaVar,
-        entityDef
+        entityDef,
+        schema
       );
       result = result ? `${result} ${partStr}` : partStr;
     }
@@ -310,70 +348,125 @@ export function serializeFilter(
   return result;
 }
 
-function serializeClause(
+// Helper function to resolve enum member name from numeric value
+function resolveEnumMemberName<S extends Schema<S>>(
+  schema: S,
+  enumTypeName: string,
+  value: number
+): string | undefined {
+  if (!schema.enumtypes) {
+    return undefined;
+  }
+  const enumType = schema.enumtypes[enumTypeName];
+  if (!enumType || !enumType.members) {
+    return undefined;
+  }
+  const entry = Object.entries(enumType.members).find(([_, val]) => val === value);
+  return entry ? entry[0] : undefined;
+}
+
+// Helper function to format enum value as FQN
+function formatEnumValue<S extends Schema<S>>(
+  schema: S | undefined,
+  enumTypeName: string,
+  memberName: string
+): string {
+  if (!schema || !schema.namespace) {
+    // Fallback to plain member name if schema/namespace not available
+    return `'${memberName}'`;
+  }
+  return `${schema.namespace}.${enumTypeName}'${memberName}'`;
+}
+
+function serializeClause<S extends Schema<S> = Schema<any>>(
   property: string,
   operator: ComparisonOperator,
   value: any,
   entityDef?: QueryableEntity,
-  originalProperty?: string
+  originalProperty?: string,
+  schema?: S
 ): string {
-  const getPropertyType = (propName: string): PropertyDef | undefined => {
-    if (!entityDef) return undefined;
-    // Attempt to resolve property type from the root entity definition
-    // For nested paths (Nav/Prop), this check is optimistic (checks if Prop exists on Root).
-    // It works correctly for simple cases and ensures Date formatting works if property names are unique/consistent.
-    const actualProp = propName.includes('/') ? propName.split('/').pop() : propName;
-    if (actualProp && actualProp in entityDef.properties) {
-      return entityDef.properties[actualProp as keyof typeof entityDef.properties];
+  // Check if this is an enum property
+  const isEnumProperty = (): { isEnum: boolean; enumTypeName?: string } => {
+    if (!originalProperty || !entityDef || !entityDef.properties) {
+      return { isEnum: false };
     }
-    return undefined;
+    const propDef = entityDef.properties[originalProperty as keyof typeof entityDef.properties];
+    if (propDef && typeof propDef === 'object' && 'type' in propDef && propDef.type === 'enum') {
+      const enumTypeName = (propDef as { target: string }).target;
+      return { isEnum: true, enumTypeName };
+    }
+    return { isEnum: false };
   };
+
+  const enumInfo = isEnumProperty();
 
   const formatValue = (val: any): string => {
     if (val === null || val === undefined) {
       return 'null';
     }
 
-    if (val instanceof Date || (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val))) {
-      const propType = getPropertyType(originalProperty || property);
-      const isDateOnly =
-        propType === 'date' || (typeof propType === 'object' && propType.type === 'date');
-      const isDateTimeOffset =
-        propType === 'datetimeoffset' ||
-        (typeof propType === 'object' && propType.type === 'datetimeoffset');
+    // Handle enum values
+    if (enumInfo.isEnum && enumInfo.enumTypeName && schema) {
+      let memberName: string;
+      if (typeof val === 'string') {
+        // Use string value as member name
+        memberName = val;
+      } else if (typeof val === 'number') {
+        // Look up member name from numeric value
+        const resolved = resolveEnumMemberName(schema, enumInfo.enumTypeName, val);
+        if (!resolved) {
+          // Fallback to number if member not found
+          return String(val);
+        }
+        memberName = resolved;
+      } else {
+        // Not a string or number, fall through to normal formatting
+        return formatValueNonEnum(val);
+      }
+      return formatEnumValue(schema, enumInfo.enumTypeName, memberName);
+    }
 
+    return formatValueNonEnum(val);
+  };
+
+  const formatValueNonEnum = (val: any): string => {
+    if (val === null || val === undefined) {
+      return 'null';
+    }
+
+    // Handle Date values
+    if (val instanceof Date || (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val))) {
       let dateValue: Date;
       if (val instanceof Date) {
         dateValue = val;
       } else {
         dateValue = new Date(val);
       }
-
-      if (isDateOnly) {
-        const year = dateValue.getUTCFullYear();
-        const month = String(dateValue.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(dateValue.getUTCDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-      } else if (isDateTimeOffset) {
-        return dateValue.toISOString();
-      } else {
-        return dateValue.toISOString();
-      }
+      // Default to ISO format (DateTimeOffset)
+      return dateValue.toISOString();
     }
 
+    // Handle strings
     if (typeof val === 'string') {
       return `'${val.replace(/'/g, "''")}'`;
     }
+
+    // Handle arrays (for 'in' operator)
     if (Array.isArray(val)) {
       return `(${val.map(formatValue).join(',')})`;
     }
+
+    // Handle numbers and booleans
     return String(val);
   };
 
+  // Handle string functions
   if (operator === 'contains' || operator === 'startswith' || operator === 'endswith') {
     return `${operator}(${property},${formatValue(value)})`;
   }
 
+  // Handle 'in' operator
   if (operator === 'in') {
     if (!Array.isArray(value)) {
       throw new Error(`'in' operator requires an array value`);
@@ -381,5 +474,6 @@ function serializeClause(
     return `${property} in ${formatValue(value)}`;
   }
 
+  // Standard comparison operators
   return `${property} ${operator} ${formatValue(value)}`;
 }

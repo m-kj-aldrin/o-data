@@ -1,58 +1,68 @@
+// ============================================================================
+// OData Client Implementation
+// ============================================================================
+
+import type { Schema } from './schema';
 import type {
-  CreateObject,
-  CreateOperationOptions,
-  CreateResult,
-  CreateResponse,
   QueryableEntity,
-  CollectionQueryObject,
-  SingleQueryObject,
-  CollectionQueryResult,
+  EntitySetToQueryableEntity,
+  EntitySetToQueryableEntity as ResolveEntitySet,
+  ImportedActionKeys,
+  ImportedFunctionKeys,
+  ResolveActionFromImport,
+  ResolveFunctionFromImport,
+  BoundActionKeysForEntitySet,
+  BoundFunctionKeysForEntitySet,
+} from './types';
+import { buildQueryableEntity } from './runtime';
+import type {
   CollectionQueryResponse,
-  SingleQueryResult,
   SingleQueryResponse,
-  ResolvedSchema,
-  UpdateObject,
-  UpdateResult,
+  CreateResponse,
   UpdateResponse,
-  UpdateOperationOptions,
   DeleteResponse,
-  QueryOperationOptions,
-  OperationParameters,
-  ResolveReturnType,
   ActionResponse,
   FunctionResponse,
-  ActionKeysByScope,
-  FunctionKeysByScope,
-} from './schema';
-import {
-  buildQueryRequest,
-  buildCreateRequest,
-  buildUpdateRequest,
-  buildActionRequest,
-  buildFunctionRequest,
-  splitResponse,
-  normalizePath,
-} from './serialization';
-import { executeBatch, type BatchBuilder, type BatchResult } from './batch';
+} from './response';
+import type {
+  CollectionQueryObject,
+  SingleQueryObject,
+  QueryOperationOptions,
+} from './query';
+import { buildQueryString, buildCreateRequest, buildUpdateRequest, buildActionRequest, buildFunctionRequest } from './serialization';
+import type {
+  CreateObject,
+  UpdateObject,
+  CreateOperationOptions,
+  UpdateOperationOptions,
+  OperationParameters,
+} from './operations';
 
-type EntitySetNames<S extends ResolvedSchema<any>> = keyof S['entitysets'];
-type EntitySetByName<
-  E extends EntitySetNames<S>,
-  S extends ResolvedSchema<any>
-> = S['entitysets'][E];
+// ============================================================================
+// Types
+// ============================================================================
 
-type Fetch = (input: RequestInfo, init?: RequestInit) => Promise<Response>;
+type Fetch = (input: Request, init?: RequestInit) => Promise<Response>;
 
 export type OdataClientOptions = {
   baseUrl: string;
   transport: Fetch;
 };
 
+// Extract entityset names from schema
+type EntitySetNames<S extends Schema<S>> = keyof S['entitysets'];
+
+// Extract QueryableEntity from entityset
+type EntitySetToQE<
+  S extends Schema<S>,
+  ES extends EntitySetNames<S>
+> = EntitySetToQueryableEntity<S, ES>;
+
 // ============================================================================
-// Client Implementation
+// OdataClient
 // ============================================================================
 
-export class OdataClient<S extends ResolvedSchema<any>> {
+export class OdataClient<S extends Schema<S>> {
   #schema: S;
   #options: OdataClientOptions;
 
@@ -61,33 +71,54 @@ export class OdataClient<S extends ResolvedSchema<any>> {
     this.#options = options;
   }
 
-  entitysets<E extends EntitySetNames<S>>(entityset: E) {
-    const entity = this.#schema.entitysets[entityset] as EntitySetByName<E, S>;
-    return new CollectionOperation(this.#schema, entity, String(entityset), this.#options);
+  /**
+   * Access an entityset collection.
+   */
+  entitysets<E extends EntitySetNames<S>>(entityset: E): CollectionOperation<S, EntitySetToQE<S, E>, E> {
+    const entity = buildQueryableEntity(this.#schema, String(entityset)) as EntitySetToQE<S, E>;
+    return new CollectionOperation(this.#schema, entity, entityset, String(entityset), this.#options);
   }
 
   /**
    * Execute an unbound global action.
    */
-  async action<A extends keyof S['actions']>(
+  async action<
+    A extends ImportedActionKeys<S>
+  >(
     name: A,
-    payload: { parameters: OperationParameters<S, S['actions'][A]['parameters']> }
-  ): Promise<ActionResponse<S, S['actions'][A]['returnType']>> {
-    // Lookup parameter definitions from schema for serialization
-    const actionDef = this.#schema.actions[name];
-    const paramDefs = actionDef.parameters;
-    const useSchemaFQN = actionDef.useSchemaFQN ?? true;
+    payload: { 
+      parameters: OperationParameters<
+        S, 
+        NonNullable<S['actions']>[ResolveActionFromImport<S, A>]['parameters']
+      >
+    }
+  ): Promise<ActionResponse<
+    S, 
+    NonNullable<S['actions']>[ResolveActionFromImport<S, A>]['returnType']
+  >> {
+    // Resolve import name to action name
+    type ActionName = ResolveActionFromImport<S, A>;
+    const actionName = (this.#schema.actionImports?.[name as string] as { action: string })?.action as string;
+    
+    if (!actionName || !this.#schema.actions || !(actionName in this.#schema.actions)) {
+      throw new Error(`Action '${String(name)}' not found`);
+    }
+    
+    const actionDef = this.#schema.actions[actionName];
+    const parameterDefs = actionDef.parameters;
+    const namespace = this.#schema.namespace || '';
 
     const request = buildActionRequest(
       '',
-      this.#schema.namespace,
-      String(name),
+      namespace,
+      String(name), // Use import name, not resolved action name
       payload.parameters,
-      paramDefs,
+      parameterDefs,
       this.#schema,
       this.#options.baseUrl,
-      useSchemaFQN
+      false // Unbound actions use import name, not FQN
     );
+    
     const response = await this.#options.transport(request);
 
     if (!response.ok) {
@@ -103,7 +134,7 @@ export class OdataClient<S extends ResolvedSchema<any>> {
         statusText: response.statusText,
         headers: response.headers,
         result: { error },
-      } as ActionResponse<S, S['actions'][A]['returnType']>;
+      } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
     }
 
     if (response.status === 204) {
@@ -115,7 +146,7 @@ export class OdataClient<S extends ResolvedSchema<any>> {
         result: {
           data: undefined,
         },
-      } as ActionResponse<S, S['actions'][A]['returnType']>;
+      } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
     }
 
     const json = await response.json();
@@ -129,27 +160,45 @@ export class OdataClient<S extends ResolvedSchema<any>> {
         data: value !== undefined ? value : json,
         ...odataProps,  // @odata.context, etc.
       },
-    } as ActionResponse<S, S['actions'][A]['returnType']>;
+    } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
   }
 
   /**
    * Execute an unbound global function.
    */
-  async function<F extends keyof S['functions']>(
+  async function<
+    F extends ImportedFunctionKeys<S>
+  >(
     name: F,
-    payload: { parameters: OperationParameters<S, S['functions'][F]['parameters']> }
-  ): Promise<FunctionResponse<S, S['functions'][F]['returnType']>> {
-    const funcDef = this.#schema.functions[name];
-    const useSchemaFQN = funcDef.useSchemaFQN ?? true;
+    payload: { 
+      parameters: OperationParameters<
+        S, 
+        NonNullable<S['functions']>[ResolveFunctionFromImport<S, F>]['parameters']
+      >
+    }
+  ): Promise<FunctionResponse<
+    S, 
+    NonNullable<S['functions']>[ResolveFunctionFromImport<S, F>]['returnType']
+  >> {
+    // Resolve import name to function name
+    type FunctionName = ResolveFunctionFromImport<S, F>;
+    const functionName = (this.#schema.functionImports?.[name as string] as { function: string })?.function as string;
+    
+    if (!functionName || !this.#schema.functions || !(functionName in this.#schema.functions)) {
+      throw new Error(`Function '${String(name)}' not found`);
+    }
+    
+    const namespace = this.#schema.namespace || '';
 
     const request = buildFunctionRequest(
       '',
-      this.#schema.namespace,
-      String(name),
+      namespace,
+      String(name), // Use import name, not resolved function name
       payload.parameters,
       this.#options.baseUrl,
-      useSchemaFQN
+      false // Unbound functions use import name, not FQN
     );
+    
     const response = await this.#options.transport(request);
 
     if (!response.ok) {
@@ -165,7 +214,7 @@ export class OdataClient<S extends ResolvedSchema<any>> {
         statusText: response.statusText,
         headers: response.headers,
         result: { error },
-      } as FunctionResponse<S, S['functions'][F]['returnType']>;
+      } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
     }
 
     const json = await response.json();
@@ -180,7 +229,7 @@ export class OdataClient<S extends ResolvedSchema<any>> {
           data: value,
           ...odataProps,  // @odata.context, etc.
         },
-      } as FunctionResponse<S, S['functions'][F]['returnType']>;
+      } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
     }
     return {
       ok: true,
@@ -191,488 +240,283 @@ export class OdataClient<S extends ResolvedSchema<any>> {
         data: json,
         ...odataProps,  // @odata.context, etc.
       },
-    } as FunctionResponse<S, S['functions'][F]['returnType']>;
-  }
-
-  /**
-   * Execute a batch request.
-   */
-  async batch<R extends Record<string, any>>(
-    builder: (bb: BatchBuilder<S>) => R
-  ): Promise<BatchResult<R>> {
-    return executeBatch(this.#options, this.#schema, builder);
+    } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
   }
 }
 
-class CollectionOperation<
-  S extends ResolvedSchema<any>,
-  QE extends QueryableEntity & { actions: any; functions: any }
-> {
+// ============================================================================
+// CollectionOperation
+// ============================================================================
+
+class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E extends EntitySetNames<S> = EntitySetNames<S>> {
   #schema: S;
   #entityset: QE;
+  #entitysetName: E;
   #path: string;
   #options: OdataClientOptions;
 
-  constructor(schema: S, entityset: QE, path: string, options: OdataClientOptions) {
+  constructor(schema: S, entityset: QE, entitysetName: E, path: string, options: OdataClientOptions) {
     this.#schema = schema;
     this.#entityset = entityset;
+    this.#entitysetName = entitysetName;
     this.#path = path;
     this.#options = options;
   }
 
+  /**
+   * Query a collection of entities.
+   */
+  async query<Q extends CollectionQueryObject<QE, S>, O extends QueryOperationOptions>(
+    q: Q,
+    o?: O
+  ): Promise<CollectionQueryResponse<QE, Q, O>> {
+    const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
+    const url = this.buildUrl(queryString);
+    const request = new Request(url);
+    const response = await this.#options.transport(request);
+    const data = await response.json();
+    
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      result: data,
+    } as CollectionQueryResponse<QE, Q, O>;
+  }
+
+  /**
+   * Build the full URL for this operation.
+   */
+  private buildUrl(queryString: string = ''): string {
+    const baseUrl = this.#options.baseUrl.endsWith('/') 
+      ? this.#options.baseUrl.slice(0, -1) 
+      : this.#options.baseUrl;
+    return `${baseUrl}/${this.#path}${queryString}`;
+  }
+
+  /**
+   * Create a new entity.
+   */
   async create<O extends CreateOperationOptions<QE>>(
     c: CreateObject<QE>,
     o?: O
   ): Promise<CreateResponse<QE, O>> {
-    const request = buildCreateRequest(this.#path, c, o, this.#options.baseUrl, this.#entityset);
+    const request = buildCreateRequest(
+      this.#path,
+      c,
+      o,
+      this.#options.baseUrl,
+      this.#entityset,
+      this.#schema
+    );
     const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as CreateResponse<QE, O>;
-    }
-
-    const shouldReturnData =
-      o?.prefer?.return_representation === true ||
-      (o?.select && Array.isArray(o.select) && o.select.length > 0);
-
-    if (shouldReturnData && response.status !== 204) {
-      const json = await response.json();
-      const { data, ...odataProps } = splitResponse(json);
-      return {
-        ok: true,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data,
-          ...odataProps,  // @odata.context, etc.
-        },
-      } as CreateResponse<QE, O>;
-    } else {
-      return {
-        ok: true,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: undefined,
-        },
-      } as CreateResponse<QE, O>;
-    }
-  }
-
-  async query<Q extends CollectionQueryObject<QE>, O extends QueryOperationOptions>(
-    q: Q,
-    o?: O
-  ): Promise<CollectionQueryResponse<QE, Q, O>> {
-    const request = buildQueryRequest(this.#path, q, o, this.#options.baseUrl, this.#entityset);
-    const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as CollectionQueryResponse<QE, Q, O>;
-    }
-
-    const json = await response.json();
-    return this.#processCollectionResponse(response, json, q, o);
-  }
-
-  #processCollectionResponse<Q extends CollectionQueryObject<QE>, O extends QueryOperationOptions>(
-    response: Response,
-    json: any,
-    q: Q,
-    o?: O
-  ): CollectionQueryResponse<QE, Q, O> {
-    let data: any;
-    let odataProps: any = {};
-    if ('value' in json) {
-      const { value, ...props } = json;
-      data = value;
-      odataProps = props;
-    } else {
-      data = json;
-    }
-
-    const result: CollectionQueryResponse<QE, Q, O> = {
-      ok: true,
+    const data = await response.json();
+    
+    return {
+      ok: response.ok,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data,
-        ...odataProps,  // @odata.context, @odata.count, etc.
-      },
-    } as CollectionQueryResponse<QE, Q, O>;
-
-    // FIX: Captured maxpagesize in a local variable to satisfy TypeScript compiler for closure use
-    const maxpagesize = o?.prefer?.maxpagesize;
-    if (maxpagesize) {
-      result.next = async () => {
-        if (json['@odata.nextLink']) {
-          const nextUrl = json['@odata.nextLink'];
-          const headers = new Headers({ Accept: 'application/json' });
-          if (o?.headers) {
-            for (const [key, value] of Object.entries(o.headers)) headers.set(key, value);
-          }
-          const preferParts: string[] = [`odata.maxpagesize=${maxpagesize}`];
-          headers.set('Prefer', preferParts.join(','));
-          const nextRequest = new Request(nextUrl, { method: 'GET', headers });
-          const nextResponse = await this.#options.transport(nextRequest);
-
-          if (!nextResponse.ok) {
-            let error: any;
-            try {
-              error = await nextResponse.json();
-            } catch {
-              error = await nextResponse.text();
-            }
-            return {
-              ok: false,
-              status: nextResponse.status,
-              statusText: nextResponse.statusText,
-              headers: nextResponse.headers,
-              result: { error },
-            } as CollectionQueryResponse<QE, Q, O>;
-          }
-
-          const nextJson = await nextResponse.json();
-          return this.#processCollectionResponse(nextResponse, nextJson, q, o);
-        }
-        return undefined;
-      };
-    }
-    return result;
+      result: data,
+    } as CreateResponse<QE, O>;
   }
 
-  key(key: string) {
+  /**
+   * Access a single entity by key.
+   */
+  key(key: string): SingleOperation<S, QE, E> {
     const newPath = `${this.#path}(${key})`;
-    return new SingleOperation(this.#schema, this.#entityset, newPath, this.#options);
+    return new SingleOperation(this.#schema, this.#entityset, this.#entitysetName, newPath, this.#options);
   }
 
-  // Bound Actions (Collection Scope)
-  async action<K extends ActionKeysByScope<QE['actions'], 'collection'>>(
+  /**
+   * Execute a bound action on the collection.
+   */
+  async action<
+    K extends BoundActionKeysForEntitySet<S, E, 'collection'>
+  >(
     name: K,
-    payload: { parameters: OperationParameters<S, QE['actions'][K]['parameters']> }
-  ): Promise<ActionResponse<S, QE['actions'][K]['returnType']>> {
-    const actionDef = this.#entityset.actions[name];
-    const paramDefs = actionDef.parameters;
-    const useSchemaFQN = actionDef.useSchemaFQN ?? true;
-
-    const request = buildActionRequest(
-      this.#path,
-      this.#schema.namespace,
-      String(name),
-      payload.parameters,
-      paramDefs,
-      this.#schema,
-      this.#options.baseUrl,
-      useSchemaFQN
-    );
-    const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as ActionResponse<S, QE['actions'][K]['returnType']>;
-    }
-
-    if (response.status === 204) {
-      return {
-        ok: true,
-        status: 204,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: undefined,
-        },
-      } as ActionResponse<S, QE['actions'][K]['returnType']>;
-    }
-
-    const json = await response.json();
-    const { value, ...odataProps } = json;
-    return {
-      ok: true,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result: {
-        data: value !== undefined ? value : json,
-        ...odataProps,  // @odata.context, etc.
-      },
-    } as ActionResponse<S, QE['actions'][K]['returnType']>;
+    payload: { parameters: OperationParameters<S, NonNullable<S['actions']>[K]['parameters']> }
+  ): Promise<ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>> {
+    // TODO: Implement bound action execution - filter by target and scope at runtime
+    throw new Error('Not implemented');
   }
 
-  // Bound Functions (Collection Scope)
-  async function<K extends FunctionKeysByScope<QE['functions'], 'collection'>>(
+  /**
+   * Execute a bound function on the collection.
+   */
+  async function<
+    K extends BoundFunctionKeysForEntitySet<S, E, 'collection'>
+  >(
     name: K,
-    payload: { parameters: OperationParameters<S, QE['functions'][K]['parameters']> }
-  ): Promise<FunctionResponse<S, QE['functions'][K]['returnType']>> {
-    const funcDef = this.#entityset.functions[name];
-    const useSchemaFQN = funcDef.useSchemaFQN ?? true;
-
-    const request = buildFunctionRequest(
-      this.#path,
-      this.#schema.namespace,
-      String(name),
-      payload.parameters,
-      this.#options.baseUrl,
-      useSchemaFQN
-    );
-    const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as FunctionResponse<S, QE['functions'][K]['returnType']>;
-    }
-
-    const json = await response.json();
-    const { value, ...odataProps } = json;
-    if (value !== undefined) {
-      return {
-        ok: true,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: value,
-          ...odataProps,  // @odata.context, etc.
-        },
-      } as FunctionResponse<S, QE['functions'][K]['returnType']>;
-    }
-    return {
-      ok: true,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result: {
-        data: json,
-        ...odataProps,  // @odata.context, etc.
-      },
-    } as FunctionResponse<S, QE['functions'][K]['returnType']>;
+    payload: { parameters: OperationParameters<S, NonNullable<S['functions']>[K]['parameters']> }
+  ): Promise<FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>> {
+    // TODO: Implement bound function execution - filter by target and scope at runtime
+    throw new Error('Not implemented');
   }
 }
 
-class SingleOperation<
-  S extends ResolvedSchema<any>,
-  QE extends QueryableEntity & { actions: any; functions: any }
-> {
+// ============================================================================
+// SingleOperation
+// ============================================================================
+
+class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends EntitySetNames<S> = EntitySetNames<S>> {
   #schema: S;
   #entityset: QE;
+  #entitysetName: E;
   #path: string;
   #options: OdataClientOptions;
 
-  constructor(schema: S, entityset: QE, path: string, options: OdataClientOptions) {
+  constructor(schema: S, entityset: QE, entitysetName: E, path: string, options: OdataClientOptions) {
     this.#schema = schema;
     this.#entityset = entityset;
+    this.#entitysetName = entitysetName;
     this.#path = path;
     this.#options = options;
   }
 
-  async query<Q extends SingleQueryObject<QE>, O extends QueryOperationOptions>(
+  /**
+   * Query a single entity.
+   */
+  async query<Q extends SingleQueryObject<QE, S>, O extends QueryOperationOptions>(
     q: Q,
     o?: O
   ): Promise<SingleQueryResponse<QE, Q, O>> {
-    const request = buildQueryRequest(this.#path, q, o, this.#options.baseUrl, this.#entityset);
+    const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
+    const url = this.buildUrl(queryString);
+    const request = new Request(url);
     const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as SingleQueryResponse<QE, Q, O>;
-    }
-
-    const json = await response.json();
-    const { data, ...odataProps } = splitResponse(json);
+    const data = await response.json();
+    
     return {
-      ok: true,
+      ok: response.ok,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data,
-        ...odataProps,  // @odata.context, etc.
-      },
+      result: data,
     } as SingleQueryResponse<QE, Q, O>;
   }
 
-  navigate<N extends keyof QE['navigations'], Nav extends QE['navigations'][N]>(
-    navigation_property: N
-  ): QE['navigations'][N]['collection'] extends true
-    ? CollectionOperation<S, QE['navigations'][N]['target'] & { actions: any; functions: any }>
-    : SingleOperation<S, QE['navigations'][N]['target'] & { actions: any; functions: any }> {
-    const navigation = this.#entityset['navigations'][navigation_property] as any;
-    const target = navigation.target;
-    // Normalize path: remove trailing slash from #path, add single /, then navigation property
-    const newPath = this.#path.endsWith('/')
-      ? `${this.#path.slice(0, -1)}/${String(navigation_property)}`
-      : `${this.#path}/${String(navigation_property)}`;
-
-    if (navigation.collection) {
-      return new CollectionOperation(this.#schema, target, newPath, this.#options) as any;
-    } else {
-      return new SingleOperation(this.#schema, target, newPath, this.#options) as any;
-    }
+  /**
+   * Build the full URL for this operation.
+   */
+  private buildUrl(queryString: string = ''): string {
+    const baseUrl = this.#options.baseUrl.endsWith('/') 
+      ? this.#options.baseUrl.slice(0, -1) 
+      : this.#options.baseUrl;
+    return `${baseUrl}/${this.#path}${queryString}`;
   }
 
+  /**
+   * Update an entity.
+   */
   async update<O extends UpdateOperationOptions<QE>>(
     u: UpdateObject<QE>,
     o?: O
   ): Promise<UpdateResponse<QE, O>> {
-    const request = buildUpdateRequest(this.#path, u, o, this.#options.baseUrl, this.#entityset);
+    const request = buildUpdateRequest(
+      this.#path,
+      u,
+      o,
+      this.#options.baseUrl,
+      this.#entityset,
+      this.#schema
+    );
     const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as UpdateResponse<QE, O>;
-    }
-
-    const shouldReturnData =
-      o?.prefer?.return_representation === true ||
-      (o?.select && Array.isArray(o.select) && o.select.length > 0);
-
-    if (shouldReturnData && response.status !== 204) {
-      const json = await response.json();
-      const { data, ...odataProps } = splitResponse(json);
-      return {
-        ok: true,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data,
-          ...odataProps,  // @odata.context, etc.
-        },
-      } as UpdateResponse<QE, O>;
-    } else {
-      return {
-        ok: true,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: undefined,
-        },
-      } as UpdateResponse<QE, O>;
-    }
-  }
-
-  async delete(): Promise<DeleteResponse> {
-    const url = normalizePath(this.#options.baseUrl, this.#path);
-    const request = new Request(url, { method: 'DELETE', headers: { Accept: 'application/json' } });
-    const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      };
-    }
-
-    // Delete operations typically return 204 No Content with no body
+    const data = await response.json();
+    
     return {
-      ok: true,
+      ok: response.ok,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data: undefined,
-      },
-    };
+      result: data,
+    } as UpdateResponse<QE, O>;
   }
 
-  // Bound Actions (Entity Scope)
-  async action<K extends ActionKeysByScope<QE['actions'], 'entity'>>(
+  /**
+   * Delete an entity.
+   */
+  async delete(): Promise<DeleteResponse> {
+    // TODO: Implement delete execution
+    throw new Error('Not implemented');
+  }
+
+  /**
+   * Navigate to a related entity or collection.
+   */
+  navigate<N extends keyof QE['navigations']>(
+    navigation_property: N
+  ): QE['navigations'][N]['targetEntitysetKey'] extends string
+    ? QE['navigations'][N]['collection'] extends true
+      ? CollectionOperation<S, ResolveEntitySet<S, QE['navigations'][N]['targetEntitysetKey']>>
+      : SingleOperation<S, ResolveEntitySet<S, QE['navigations'][N]['targetEntitysetKey']>>
+    : QE['navigations'][N]['collection'] extends true
+    ? CollectionOperation<S, QueryableEntity>
+    : SingleOperation<S, QueryableEntity> {
+    // TODO: Implement navigation
+    const navigation = this.#entityset.navigations[navigation_property as string];
+    if (!navigation) {
+      throw new Error(`Navigation property '${String(navigation_property)}' not found`);
+    }
+    
+    const targetEntitysetKey = navigation.targetEntitysetKey;
+    const newPath = `${this.#path}/${String(navigation_property)}`;
+    
+    // Build QueryableEntity shape from schema at runtime
+    const actualTargetKey = typeof targetEntitysetKey === 'string' 
+      ? targetEntitysetKey 
+      : Array.isArray(targetEntitysetKey) && targetEntitysetKey.length > 0
+      ? targetEntitysetKey[0]
+      : '';
+    
+    if (actualTargetKey && actualTargetKey in this.#schema.entitysets) {
+      const targetEntity = buildQueryableEntity(this.#schema, actualTargetKey) as ResolveEntitySet<S, typeof actualTargetKey>;
+      if (navigation.collection) {
+        return new CollectionOperation(this.#schema, targetEntity, actualTargetKey as any, newPath, this.#options) as any;
+      } else {
+        return new SingleOperation(this.#schema, targetEntity, actualTargetKey as any, newPath, this.#options) as any;
+      }
+    }
+    
+    // Fallback for union types or invalid targets
+    const fallbackEntity = buildQueryableEntity(this.#schema, actualTargetKey || '');
+    if (navigation.collection) {
+      return new CollectionOperation(this.#schema, fallbackEntity, actualTargetKey as any, newPath, this.#options) as any;
+    } else {
+      return new SingleOperation(this.#schema, fallbackEntity, actualTargetKey as any, newPath, this.#options) as any;
+    }
+  }
+
+  /**
+   * Execute a bound action on the entity.
+   */
+  async action<
+    K extends BoundActionKeysForEntitySet<S, E, 'entity'>
+  >(
     name: K,
-    payload: { parameters: OperationParameters<S, QE['actions'][K]['parameters']> }
-  ): Promise<ActionResponse<S, QE['actions'][K]['returnType']>> {
-    const actionDef = this.#entityset.actions[name];
-    const paramDefs = actionDef.parameters;
-    const useSchemaFQN = actionDef.useSchemaFQN ?? true;
+    payload: { parameters: OperationParameters<S, NonNullable<S['actions']>[K]['parameters']> }
+  ): Promise<ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>> {
+    if (!this.#schema.actions || !(name in this.#schema.actions)) {
+      throw new Error(`Action '${String(name)}' not found`);
+    }
+    
+    const actionDef = this.#schema.actions[name];
+    const parameterDefs = actionDef.parameters;
+    const namespace = this.#schema.namespace || '';
 
     const request = buildActionRequest(
       this.#path,
-      this.#schema.namespace,
-      String(name),
+      namespace,
+      String(name), // Use action name, not import name
       payload.parameters,
-      paramDefs,
+      parameterDefs,
       this.#schema,
       this.#options.baseUrl,
-      useSchemaFQN
+      true // Bound actions always use FQN
     );
+    
     const response = await this.#options.transport(request);
 
     if (!response.ok) {
@@ -688,7 +532,7 @@ class SingleOperation<
         statusText: response.statusText,
         headers: response.headers,
         result: { error },
-      } as ActionResponse<S, QE['actions'][K]['returnType']>;
+      } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
     }
 
     if (response.status === 204) {
@@ -700,8 +544,9 @@ class SingleOperation<
         result: {
           data: undefined,
         },
-      } as ActionResponse<S, QE['actions'][K]['returnType']>;
+      } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
     }
+
     const json = await response.json();
     const { value, ...odataProps } = json;
     return {
@@ -713,25 +558,33 @@ class SingleOperation<
         data: value !== undefined ? value : json,
         ...odataProps,  // @odata.context, etc.
       },
-    } as ActionResponse<S, QE['actions'][K]['returnType']>;
+    } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
   }
 
-  // Bound Functions (Entity Scope)
-  async function<K extends FunctionKeysByScope<QE['functions'], 'entity'>>(
+  /**
+   * Execute a bound function on the entity.
+   */
+  async function<
+    K extends BoundFunctionKeysForEntitySet<S, E, 'entity'>
+  >(
     name: K,
-    payload: { parameters: OperationParameters<S, QE['functions'][K]['parameters']> }
-  ): Promise<FunctionResponse<S, QE['functions'][K]['returnType']>> {
-    const funcDef = this.#entityset.functions[name];
-    const useSchemaFQN = funcDef.useSchemaFQN ?? true;
+    payload: { parameters: OperationParameters<S, NonNullable<S['functions']>[K]['parameters']> }
+  ): Promise<FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>> {
+    if (!this.#schema.functions || !(name in this.#schema.functions)) {
+      throw new Error(`Function '${String(name)}' not found`);
+    }
+    
+    const namespace = this.#schema.namespace || '';
 
     const request = buildFunctionRequest(
       this.#path,
-      this.#schema.namespace,
-      String(name),
+      namespace,
+      String(name), // Use function name, not import name
       payload.parameters,
       this.#options.baseUrl,
-      useSchemaFQN
+      true // Bound functions always use FQN
     );
+    
     const response = await this.#options.transport(request);
 
     if (!response.ok) {
@@ -747,7 +600,7 @@ class SingleOperation<
         statusText: response.statusText,
         headers: response.headers,
         result: { error },
-      } as FunctionResponse<S, QE['functions'][K]['returnType']>;
+      } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
     }
 
     const json = await response.json();
@@ -762,7 +615,7 @@ class SingleOperation<
           data: value,
           ...odataProps,  // @odata.context, etc.
         },
-      } as FunctionResponse<S, QE['functions'][K]['returnType']>;
+      } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
     }
     return {
       ok: true,
@@ -773,6 +626,6 @@ class SingleOperation<
         data: json,
         ...odataProps,  // @odata.context, etc.
       },
-    } as FunctionResponse<S, QE['functions'][K]['returnType']>;
+    } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
   }
 }
