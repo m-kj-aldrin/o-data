@@ -22,6 +22,7 @@ interface NormalizedMaskRules {
   boundFunctionsByEntity: Map<string, { all: boolean; patterns: RegExp[] }>;
   unboundActions: RegExp[];
   unboundFunctions: RegExp[];
+  onlyBoundActionsByEntity: Map<string, RegExp[]>;
 }
 
 function normalizeExcludeFilters(filters?: ExcludeFilters): NormalizedExcludeFilters {
@@ -61,12 +62,24 @@ function normalizeMaskRules(mask?: MaskRules): NormalizedMaskRules {
     return result;
   };
 
+  const normalizeByEntityOnly = (
+    input?: Record<string, (string | RegExp)[]>
+  ): Map<string, RegExp[]> => {
+    const result = new Map<string, RegExp[]>();
+    if (!input) return result;
+    for (const [key, value] of Object.entries(input)) {
+      result.set(key, normalize(value));
+    }
+    return result;
+  };
+
   return {
     entities: normalize(mask?.entities),
     boundActionsByEntity: normalizeByEntity(mask?.boundActionsByEntity),
     boundFunctionsByEntity: normalizeByEntity(mask?.boundFunctionsByEntity),
     unboundActions: normalize(mask?.unboundActions),
     unboundFunctions: normalize(mask?.unboundFunctions),
+    onlyBoundActionsByEntity: normalizeByEntityOnly(mask?.onlyBoundActionsByEntity),
   };
 }
 
@@ -386,6 +399,8 @@ async function main() {
 
   // 1.1 EntitySet Discovery
   const includedEntitySets = new Set<string>();
+  const operationExpandedEntitySets = new Set<string>();
+  const operationExpandedEntityTypes = new Set<string>();
   if (WANTED_ENTITIES === 'ALL') {
     if (entityContainer && entityContainer.EntitySet) {
       for (const set of entityContainer.EntitySet) {
@@ -472,6 +487,28 @@ async function main() {
         if (entitySetName && !isExcluded(entitySetName, 'entities')) {
           if (!includedEntitySets.has(entitySetName)) {
             includedEntitySets.add(entitySetName);
+            operationExpandedEntitySets.add(entitySetName);
+            operationExpandedEntityTypes.add(resolvedType);
+            if (entitySetName === 'businessunits') {
+              // #region agent log
+              fetch('http://127.0.0.1:7298/ingest/78079676-7806-4722-9579-a988c01a7283', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Debug-Session-Id': '6ca524',
+                },
+                body: JSON.stringify({
+                  sessionId: '6ca524',
+                  runId: 'run1',
+                  hypothesisId: 'H1',
+                  location: 'src/parser/index.ts:extractTypeDependencies',
+                  message: 'EntitySet added via operation-based expansion',
+                  data: { entitySetName, resolvedType },
+                  timestamp: Date.now(),
+                }),
+              }).catch(() => {});
+              // #endregion
+            }
           }
           if (!includedEntityTypes.has(resolvedType)) {
             resolveBaseTypeChain(resolvedType);
@@ -582,10 +619,52 @@ async function main() {
   function registerOperationDependencies(op: CsdlActionOrFunction) {
     if (op.Parameter) {
       for (const param of op.Parameter) {
+        const { name: resolvedType } = resolveType(param['@_Type']);
+        if (resolvedType === 'Microsoft.Dynamics.CRM.businessunit') {
+          // #region agent log
+          fetch('http://127.0.0.1:7298/ingest/78079676-7806-4722-9579-a988c01a7283', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Debug-Session-Id': '6ca524',
+            },
+            body: JSON.stringify({
+              sessionId: '6ca524',
+              runId: 'run2',
+              hypothesisId: 'H2',
+              location: 'src/parser/index.ts:registerOperationDependencies:param',
+              message: 'Operation parameter depends on businessunit',
+              data: { opName: op['@_Name'], paramName: param['@_Name'], resolvedType },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {});
+          // #endregion
+        }
         extractTypeDependencies(param['@_Type'], false, { allowEntitySetExpansionFromEntityType: true });
       }
     }
     if (op.ReturnType) {
+      const { name: resolvedType } = resolveType(op.ReturnType['@_Type']);
+      if (resolvedType === 'Microsoft.Dynamics.CRM.businessunit') {
+        // #region agent log
+        fetch('http://127.0.0.1:7298/ingest/78079676-7806-4722-9579-a988c01a7283', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Debug-Session-Id': '6ca524',
+          },
+          body: JSON.stringify({
+            sessionId: '6ca524',
+            runId: 'run2',
+            hypothesisId: 'H2',
+            location: 'src/parser/index.ts:registerOperationDependencies:return',
+            message: 'Operation return type depends on businessunit',
+            data: { opName: op['@_Name'], resolvedType },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
+      }
       extractTypeDependencies(op.ReturnType['@_Type'], false, { allowEntitySetExpansionFromEntityType: true });
     }
   }
@@ -705,6 +784,7 @@ async function main() {
   // Apply selection-mode and mask rules before code generation
   applyOnlyModeFilters();
   applyMaskRules();
+  pruneOperationExpandedEntities();
 
   // --------------------------------------------------------------------------
   // Phase 3: Code Generation
@@ -908,6 +988,16 @@ async function main() {
   function applyMaskRules() {
     const mask = MASK;
 
+    const getEntityKeysForBinding = (typeFqn: string): string[] => {
+      const shortName = getShortName(typeFqn);
+      const setName = typeToSetMap.get(typeFqn);
+      const keys = new Set<string>();
+      keys.add(shortName);
+      keys.add(typeFqn);
+      if (setName) keys.add(setName);
+      return Array.from(keys);
+    };
+
     // Helper: entity mask
     const isEntityMasked = (setOrTypeName: string): boolean => {
       return mask.entities.some((r) => r.test(setOrTypeName));
@@ -940,6 +1030,28 @@ async function main() {
       return false;
     };
 
+    // Helper: per-entity only-bound-actions whitelist
+    const shouldKeepBoundActionByOnlyList = (op: ProcessedOperation): boolean => {
+      if (!op.bindingTypeFQN) return true;
+      if (mask.onlyBoundActionsByEntity.size === 0) return true;
+
+      const keys = getEntityKeysForBinding(op.bindingTypeFQN);
+      const name = op.def['@_Name'];
+
+      let hasRule = false;
+      for (const key of keys) {
+        const patterns = mask.onlyBoundActionsByEntity.get(key);
+        if (!patterns) continue;
+        hasRule = true;
+        if (patterns.some((r) => r.test(name))) {
+          return true;
+        }
+      }
+
+      if (hasRule) return false;
+      return true;
+    };
+
     // Helper: unbound operation mask
     const isUnboundOperationMasked = (op: ProcessedOperation): boolean => {
       const patterns =
@@ -970,6 +1082,10 @@ async function main() {
 
     // Mask bound operations
     for (const [bindingTypeFQN, ops] of Array.from(boundOperations.entries())) {
+      // Apply per-entity only-bound-actions whitelist first
+      ops.actions = ops.actions.filter((op) => shouldKeepBoundActionByOnlyList(op));
+
+      // Then apply negative masks
       ops.actions = ops.actions.filter((op) => !isBoundOperationMasked(op));
       ops.functions = ops.functions.filter((op) => !isBoundOperationMasked(op));
 
@@ -991,6 +1107,83 @@ async function main() {
       if (!op) continue;
       if (isUnboundOperationMasked(op)) {
         unboundFunctions.splice(i, 1);
+      }
+    }
+  }
+
+  function pruneOperationExpandedEntities() {
+    if (WANTED_ENTITIES === 'ALL') {
+      return;
+    }
+    const wantedSet = new Set(WANTED_ENTITIES);
+
+    const isEntityTypeReferencedByOperations = (entityTypeFQN: string): boolean => {
+      const direct = boundOperations.get(entityTypeFQN);
+      if (direct && (direct.actions.length > 0 || direct.functions.length > 0)) {
+        return true;
+      }
+
+      const checkOpTypes = (op: ProcessedOperation): boolean => {
+        const def = op.def;
+        if (def.Parameter) {
+          for (const param of def.Parameter) {
+            const { name: t } = resolveType(param['@_Type']);
+            if (t === entityTypeFQN) return true;
+          }
+        }
+        if (def.ReturnType) {
+          const { name: t } = resolveType(def.ReturnType['@_Type']);
+          if (t === entityTypeFQN) return true;
+        }
+        return false;
+      };
+
+      for (const [, ops] of boundOperations) {
+        for (const op of ops.actions) {
+          if (checkOpTypes(op)) return true;
+        }
+        for (const op of ops.functions) {
+          if (checkOpTypes(op)) return true;
+        }
+      }
+      for (const op of unboundActions) {
+        if (checkOpTypes(op)) return true;
+      }
+      for (const op of unboundFunctions) {
+        if (checkOpTypes(op)) return true;
+      }
+      return false;
+    };
+
+    for (const setName of Array.from(operationExpandedEntitySets)) {
+      if (!includedEntitySets.has(setName)) continue;
+      if (wantedSet.has(setName)) continue;
+      const typeFqn = setToTypeMap.get(setName);
+      if (!typeFqn) continue;
+      if (isEntityTypeReferencedByOperations(typeFqn)) continue;
+
+      includedEntitySets.delete(setName);
+      includedEntityTypes.delete(typeFqn);
+
+      if (setName === 'businessunits') {
+        // #region agent log
+        fetch('http://127.0.0.1:7298/ingest/78079676-7806-4722-9579-a988c01a7283', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Debug-Session-Id': '6ca524',
+          },
+          body: JSON.stringify({
+            sessionId: '6ca524',
+            runId: 'postfix',
+            hypothesisId: 'H3',
+            location: 'src/parser/index.ts:pruneOperationExpandedEntities',
+            message: 'Pruned operation-only entity set',
+            data: { setName, typeFqn },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
       }
     }
   }

@@ -13,6 +13,7 @@ export interface MaskRules {
   boundFunctionsByEntity?: Record<string, (string | RegExp)[] | 'ALL'>;
   unboundActions?: (string | RegExp)[];
   unboundFunctions?: (string | RegExp)[];
+  onlyBoundActionsByEntity?: Record<string, (string | RegExp)[]>;
 }
 
 export type SelectionMode = 'additive' | 'only';
