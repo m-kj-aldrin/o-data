@@ -489,26 +489,6 @@ async function main() {
             includedEntitySets.add(entitySetName);
             operationExpandedEntitySets.add(entitySetName);
             operationExpandedEntityTypes.add(resolvedType);
-            if (entitySetName === 'businessunits') {
-              // #region agent log
-              fetch('http://127.0.0.1:7298/ingest/78079676-7806-4722-9579-a988c01a7283', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'X-Debug-Session-Id': '6ca524',
-                },
-                body: JSON.stringify({
-                  sessionId: '6ca524',
-                  runId: 'run1',
-                  hypothesisId: 'H1',
-                  location: 'src/parser/index.ts:extractTypeDependencies',
-                  message: 'EntitySet added via operation-based expansion',
-                  data: { entitySetName, resolvedType },
-                  timestamp: Date.now(),
-                }),
-              }).catch(() => {});
-              // #endregion
-            }
           }
           if (!includedEntityTypes.has(resolvedType)) {
             resolveBaseTypeChain(resolvedType);
@@ -619,52 +599,10 @@ async function main() {
   function registerOperationDependencies(op: CsdlActionOrFunction) {
     if (op.Parameter) {
       for (const param of op.Parameter) {
-        const { name: resolvedType } = resolveType(param['@_Type']);
-        if (resolvedType === 'Microsoft.Dynamics.CRM.businessunit') {
-          // #region agent log
-          fetch('http://127.0.0.1:7298/ingest/78079676-7806-4722-9579-a988c01a7283', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Debug-Session-Id': '6ca524',
-            },
-            body: JSON.stringify({
-              sessionId: '6ca524',
-              runId: 'run2',
-              hypothesisId: 'H2',
-              location: 'src/parser/index.ts:registerOperationDependencies:param',
-              message: 'Operation parameter depends on businessunit',
-              data: { opName: op['@_Name'], paramName: param['@_Name'], resolvedType },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {});
-          // #endregion
-        }
         extractTypeDependencies(param['@_Type'], false, { allowEntitySetExpansionFromEntityType: true });
       }
     }
     if (op.ReturnType) {
-      const { name: resolvedType } = resolveType(op.ReturnType['@_Type']);
-      if (resolvedType === 'Microsoft.Dynamics.CRM.businessunit') {
-        // #region agent log
-        fetch('http://127.0.0.1:7298/ingest/78079676-7806-4722-9579-a988c01a7283', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Debug-Session-Id': '6ca524',
-          },
-          body: JSON.stringify({
-            sessionId: '6ca524',
-            runId: 'run2',
-            hypothesisId: 'H2',
-            location: 'src/parser/index.ts:registerOperationDependencies:return',
-            message: 'Operation return type depends on businessunit',
-            data: { opName: op['@_Name'], resolvedType },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
-      }
       extractTypeDependencies(op.ReturnType['@_Type'], false, { allowEntitySetExpansionFromEntityType: true });
     }
   }
@@ -680,8 +618,16 @@ async function main() {
           const bindingParam = op.Parameter[0];
           if (!bindingParam) continue;
           const { name: bindingTypeFQN, isCollection } = resolveType(bindingParam['@_Type']);
+          const bindingSetName = typeToSetMap.get(bindingTypeFQN);
 
-          if (includedEntityTypes.has(bindingTypeFQN) && !isExcluded(op['@_Name'], 'actions')) {
+          let isBindingEntityAllowed = true;
+          if (WANTED_ENTITIES !== 'ALL') {
+            if (!bindingSetName || !WANTED_ENTITIES.includes(bindingSetName)) {
+              isBindingEntityAllowed = false;
+            }
+          }
+
+          if (isBindingEntityAllowed && includedEntityTypes.has(bindingTypeFQN) && !isExcluded(op['@_Name'], 'actions')) {
             registerOperationDependencies(op);
 
             const processed: ProcessedOperation = {
@@ -723,8 +669,16 @@ async function main() {
           const bindingParam = op.Parameter[0];
           if (!bindingParam) continue;
           const { name: bindingTypeFQN, isCollection } = resolveType(bindingParam['@_Type']);
+          const bindingSetName = typeToSetMap.get(bindingTypeFQN);
 
-          if (includedEntityTypes.has(bindingTypeFQN) && !isExcluded(op['@_Name'], 'functions')) {
+          let isBindingEntityAllowed = true;
+          if (WANTED_ENTITIES !== 'ALL') {
+            if (!bindingSetName || !WANTED_ENTITIES.includes(bindingSetName)) {
+              isBindingEntityAllowed = false;
+            }
+          }
+
+          if (isBindingEntityAllowed && includedEntityTypes.has(bindingTypeFQN) && !isExcluded(op['@_Name'], 'functions')) {
             registerOperationDependencies(op);
 
             const processed: ProcessedOperation = {
@@ -1164,27 +1118,6 @@ async function main() {
 
       includedEntitySets.delete(setName);
       includedEntityTypes.delete(typeFqn);
-
-      if (setName === 'businessunits') {
-        // #region agent log
-        fetch('http://127.0.0.1:7298/ingest/78079676-7806-4722-9579-a988c01a7283', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Debug-Session-Id': '6ca524',
-          },
-          body: JSON.stringify({
-            sessionId: '6ca524',
-            runId: 'postfix',
-            hypothesisId: 'H3',
-            location: 'src/parser/index.ts:pruneOperationExpandedEntities',
-            message: 'Pruned operation-only entity set',
-            data: { setName, typeFqn },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
-      }
     }
   }
 
