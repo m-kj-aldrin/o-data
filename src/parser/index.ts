@@ -1,7 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import * as fs from 'fs';
 import path, { dirname } from 'path';
-import type { ParserConfig, ExcludeFilters } from './config';
+import type { ParserConfig, ExcludeFilters, MaskRules, SelectionMode } from './config';
 
 // ----------------------------------------------------------------------------
 // CONFIGURATION
@@ -14,6 +14,14 @@ interface NormalizedExcludeFilters {
   functions: RegExp[];
   properties: RegExp[];
   navigations: RegExp[];
+}
+
+interface NormalizedMaskRules {
+  entities: RegExp[];
+  boundActionsByEntity: Map<string, { all: boolean; patterns: RegExp[] }>;
+  boundFunctionsByEntity: Map<string, { all: boolean; patterns: RegExp[] }>;
+  unboundActions: RegExp[];
+  unboundFunctions: RegExp[];
 }
 
 function normalizeExcludeFilters(filters?: ExcludeFilters): NormalizedExcludeFilters {
@@ -32,6 +40,36 @@ function normalizeExcludeFilters(filters?: ExcludeFilters): NormalizedExcludeFil
   };
 }
 
+function normalizeMaskRules(mask?: MaskRules): NormalizedMaskRules {
+  const normalize = (patterns?: (string | RegExp)[]): RegExp[] => {
+    if (!patterns) return [];
+    return patterns.map((p) => (typeof p === 'string' ? new RegExp(p) : p));
+  };
+
+  const normalizeByEntity = (
+    input?: Record<string, (string | RegExp)[] | 'ALL'>
+  ): Map<string, { all: boolean; patterns: RegExp[] }> => {
+    const result = new Map<string, { all: boolean; patterns: RegExp[] }>();
+    if (!input) return result;
+    for (const [key, value] of Object.entries(input)) {
+      if (value === 'ALL') {
+        result.set(key, { all: true, patterns: [] });
+      } else {
+        result.set(key, { all: false, patterns: normalize(value) });
+      }
+    }
+    return result;
+  };
+
+  return {
+    entities: normalize(mask?.entities),
+    boundActionsByEntity: normalizeByEntity(mask?.boundActionsByEntity),
+    boundFunctionsByEntity: normalizeByEntity(mask?.boundFunctionsByEntity),
+    unboundActions: normalize(mask?.unboundActions),
+    unboundFunctions: normalize(mask?.unboundFunctions),
+  };
+}
+
 async function loadConfig(): Promise<{
   inputFile: string;
   outputFile: string;
@@ -39,6 +77,13 @@ async function loadConfig(): Promise<{
   wantedUnboundActions: string[] | 'ALL' | undefined;
   wantedUnboundFunctions: string[] | 'ALL' | undefined;
   excludeFilters: NormalizedExcludeFilters;
+  selectionMode: SelectionMode;
+  onlyEntities?: string[];
+  onlyBoundActions?: string[];
+  onlyBoundFunctions?: string[];
+  onlyUnboundActions?: string[];
+  onlyUnboundFunctions?: string[];
+  mask: NormalizedMaskRules;
 }> {
   const configPathArg = process.argv[2];
   let configPath: string | null = null;
@@ -87,6 +132,13 @@ async function loadConfig(): Promise<{
       wantedUnboundActions: config.wantedUnboundActions,
       wantedUnboundFunctions: config.wantedUnboundFunctions,
       excludeFilters: normalizeExcludeFilters(config.excludeFilters),
+      selectionMode: config.selectionMode ?? 'additive',
+      onlyEntities: config.onlyEntities,
+      onlyBoundActions: config.onlyBoundActions,
+      onlyBoundFunctions: config.onlyBoundFunctions,
+      onlyUnboundActions: config.onlyUnboundActions,
+      onlyUnboundFunctions: config.onlyUnboundFunctions,
+      mask: normalizeMaskRules(config.mask),
     };
   } catch (error) {
     console.error(`Error loading config file: ${error}`);
@@ -183,6 +235,13 @@ async function main() {
   const WANTED_UNBOUND_ACTIONS = config.wantedUnboundActions;
   const WANTED_UNBOUND_FUNCTIONS = config.wantedUnboundFunctions;
   const EXCLUDE_FILTERS = config.excludeFilters;
+  const SELECTION_MODE = config.selectionMode;
+  const ONLY_ENTITIES = config.onlyEntities;
+  const ONLY_BOUND_ACTIONS = config.onlyBoundActions;
+  const ONLY_BOUND_FUNCTIONS = config.onlyBoundFunctions;
+  const ONLY_UNBOUND_ACTIONS = config.onlyUnboundActions;
+  const ONLY_UNBOUND_FUNCTIONS = config.onlyUnboundFunctions;
+  const MASK = config.mask;
 
   if (!fs.existsSync(INPUT_FILE)) {
     console.error(`Input file not found: ${INPUT_FILE}`);
@@ -373,7 +432,11 @@ async function main() {
   const includedComplexTypes = new Set<string>();
   const includedEnumTypes = new Set<string>();
 
-  function extractTypeDependencies(typeFQN: string, isCollection: boolean) {
+  function extractTypeDependencies(
+    typeFQN: string,
+    isCollection: boolean,
+    options?: { allowEntitySetExpansionFromEntityType?: boolean }
+  ) {
     const { name: resolvedType } = resolveType(typeFQN);
     
     if (resolvedType.startsWith('Edm.')) {
@@ -394,24 +457,32 @@ async function main() {
         const ct = complexTypes.get(resolvedType);
         if (ct && ct.Property) {
           for (const prop of ct.Property) {
-            extractTypeDependencies(prop['@_Type'], false);
+            extractTypeDependencies(prop['@_Type'], false, options);
           }
         }
       }
       return;
     }
 
-    // Check if EntityType - if so, include it and its EntitySet
+    // Check if EntityType
     if (entityTypes.has(resolvedType)) {
       const entitySetName = typeToSetMap.get(resolvedType);
-      if (entitySetName && !isExcluded(entitySetName, 'entities')) {
-        // Add EntitySet if not already included
-        if (!includedEntitySets.has(entitySetName)) {
-          includedEntitySets.add(entitySetName);
+      if (options?.allowEntitySetExpansionFromEntityType) {
+        // Operation-based or explicit expansion: allow new entity sets
+        if (entitySetName && !isExcluded(entitySetName, 'entities')) {
+          if (!includedEntitySets.has(entitySetName)) {
+            includedEntitySets.add(entitySetName);
+          }
+          if (!includedEntityTypes.has(resolvedType)) {
+            resolveBaseTypeChain(resolvedType);
+          }
         }
-        // Add EntityType and resolve baseType chain
-        if (!includedEntityTypes.has(resolvedType)) {
-          resolveBaseTypeChain(resolvedType);
+      } else {
+        // Structural/entity-set–driven paths: respect wantedEntities whitelist
+        if (entitySetName && includedEntitySets.has(entitySetName)) {
+          if (!includedEntityTypes.has(resolvedType)) {
+            resolveBaseTypeChain(resolvedType);
+          }
         }
       }
       return;
@@ -427,7 +498,7 @@ async function main() {
     if (entityType.Property) {
       for (const prop of entityType.Property) {
         if (isExcluded(prop['@_Name'], 'properties')) continue;
-        extractTypeDependencies(prop['@_Type'], false);
+        extractTypeDependencies(prop['@_Type'], false, { allowEntitySetExpansionFromEntityType: false });
       }
     }
 
@@ -511,11 +582,11 @@ async function main() {
   function registerOperationDependencies(op: CsdlActionOrFunction) {
     if (op.Parameter) {
       for (const param of op.Parameter) {
-        extractTypeDependencies(param['@_Type'], false);
+        extractTypeDependencies(param['@_Type'], false, { allowEntitySetExpansionFromEntityType: true });
       }
     }
     if (op.ReturnType) {
-      extractTypeDependencies(op.ReturnType['@_Type'], false);
+      extractTypeDependencies(op.ReturnType['@_Type'], false, { allowEntitySetExpansionFromEntityType: true });
     }
   }
 
@@ -620,7 +691,7 @@ async function main() {
     if (entityType.Property) {
       for (const prop of entityType.Property) {
         if (isExcluded(prop['@_Name'], 'properties')) continue;
-        extractTypeDependencies(prop['@_Type'], false);
+        extractTypeDependencies(prop['@_Type'], false, { allowEntitySetExpansionFromEntityType: false });
       }
     }
 
@@ -630,6 +701,10 @@ async function main() {
 
   // Final dependency resolution after the sweep
   resolveComplexDependencies();
+
+  // Apply selection-mode and mask rules before code generation
+  applyOnlyModeFilters();
+  applyMaskRules();
 
   // --------------------------------------------------------------------------
   // Phase 3: Code Generation
@@ -752,6 +827,172 @@ async function main() {
       return `{ type: '${edmType}', collection: true }`;
     }
     return `{ type: '${edmType}' }`;
+  }
+
+  // ------------------------------------------------------------------------
+  // Phase 2.5: Apply selection-mode and mask rules
+  // ------------------------------------------------------------------------
+
+  function applyOnlyModeFilters() {
+    if (SELECTION_MODE !== 'only') {
+      return;
+    }
+
+    // Entities: intersect with ONLY_ENTITIES (by set name or short type name)
+    if (ONLY_ENTITIES && ONLY_ENTITIES.length > 0) {
+      const allowed = new Set(ONLY_ENTITIES);
+
+      // Filter entity sets
+      for (const setName of Array.from(includedEntitySets)) {
+        const typeFqn = setToTypeMap.get(setName);
+        const typeShort = typeFqn ? getShortName(typeFqn) : undefined;
+        if (!allowed.has(setName) && (!typeShort || !allowed.has(typeShort))) {
+          includedEntitySets.delete(setName);
+        }
+      }
+
+      // Filter entity types to those whose set (or short name) is allowed
+      for (const typeFqn of Array.from(includedEntityTypes)) {
+        const shortName = getShortName(typeFqn);
+        const setName = typeToSetMap.get(typeFqn);
+        if (!setName) {
+          // Entity types without a set are only kept if explicitly allowed by short name
+          if (!allowed.has(shortName)) {
+            includedEntityTypes.delete(typeFqn);
+          }
+        } else if (!allowed.has(setName) && !allowed.has(shortName)) {
+          includedEntityTypes.delete(typeFqn);
+        }
+      }
+    }
+
+    // Bound operations: keep only those explicitly allowed if lists are provided
+    if ((ONLY_BOUND_ACTIONS && ONLY_BOUND_ACTIONS.length > 0) ||
+        (ONLY_BOUND_FUNCTIONS && ONLY_BOUND_FUNCTIONS.length > 0)) {
+      const allowedActions = new Set(ONLY_BOUND_ACTIONS ?? []);
+      const allowedFunctions = new Set(ONLY_BOUND_FUNCTIONS ?? []);
+
+      for (const [bindingTypeFQN, ops] of Array.from(boundOperations.entries())) {
+        ops.actions = ops.actions.filter(op => allowedActions.size === 0 || allowedActions.has(op.def['@_Name']));
+        ops.functions = ops.functions.filter(op => allowedFunctions.size === 0 || allowedFunctions.has(op.def['@_Name']));
+
+        if (ops.actions.length === 0 && ops.functions.length === 0) {
+          boundOperations.delete(bindingTypeFQN);
+        }
+      }
+    }
+
+    // Unbound operations: keep only those explicitly allowed
+    if (ONLY_UNBOUND_ACTIONS && ONLY_UNBOUND_ACTIONS.length > 0) {
+      const allowed = new Set(ONLY_UNBOUND_ACTIONS);
+      for (let i = unboundActions.length - 1; i >= 0; i--) {
+        const op = unboundActions[i];
+        if (!op) continue;
+        if (!allowed.has(op.def['@_Name'])) {
+          unboundActions.splice(i, 1);
+        }
+      }
+    }
+    if (ONLY_UNBOUND_FUNCTIONS && ONLY_UNBOUND_FUNCTIONS.length > 0) {
+      const allowed = new Set(ONLY_UNBOUND_FUNCTIONS);
+      for (let i = unboundFunctions.length - 1; i >= 0; i--) {
+        const op = unboundFunctions[i];
+        if (!op) continue;
+        if (!allowed.has(op.def['@_Name'])) {
+          unboundFunctions.splice(i, 1);
+        }
+      }
+    }
+  }
+
+  function applyMaskRules() {
+    const mask = MASK;
+
+    // Helper: entity mask
+    const isEntityMasked = (setOrTypeName: string): boolean => {
+      return mask.entities.some((r) => r.test(setOrTypeName));
+    };
+
+    // Helper: bound operation mask
+    const isBoundOperationMasked = (op: ProcessedOperation): boolean => {
+      if (!op.bindingTypeFQN) return false;
+      const typeFqn = op.bindingTypeFQN;
+      const shortName = getShortName(typeFqn);
+      const setName = typeToSetMap.get(typeFqn);
+
+      const candidateKeys = new Set<string>();
+      candidateKeys.add(shortName);
+      if (setName) candidateKeys.add(setName);
+      candidateKeys.add(typeFqn);
+
+      const rulesMaps =
+        op.type === 'Action' ? mask.boundActionsByEntity : mask.boundFunctionsByEntity;
+
+      for (const key of candidateKeys) {
+        const rule = rulesMaps.get(key);
+        if (!rule) continue;
+        if (rule.all) return true;
+        if (rule.patterns.some((r) => r.test(op.def['@_Name']))) {
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    // Helper: unbound operation mask
+    const isUnboundOperationMasked = (op: ProcessedOperation): boolean => {
+      const patterns =
+        op.type === 'Action' ? mask.unboundActions : mask.unboundFunctions;
+      return patterns.some((r) => r.test(op.def['@_Name']));
+    };
+
+    // Mask entities (entity sets and types)
+    for (const setName of Array.from(includedEntitySets)) {
+      if (isEntityMasked(setName)) {
+        includedEntitySets.delete(setName);
+        const typeFqn = setToTypeMap.get(setName);
+        if (typeFqn) {
+          includedEntityTypes.delete(typeFqn);
+        }
+      }
+    }
+    for (const typeFqn of Array.from(includedEntityTypes)) {
+      const shortName = getShortName(typeFqn);
+      if (isEntityMasked(shortName) || isEntityMasked(typeFqn)) {
+        includedEntityTypes.delete(typeFqn);
+        const setName = typeToSetMap.get(typeFqn);
+        if (setName) {
+          includedEntitySets.delete(setName);
+        }
+      }
+    }
+
+    // Mask bound operations
+    for (const [bindingTypeFQN, ops] of Array.from(boundOperations.entries())) {
+      ops.actions = ops.actions.filter((op) => !isBoundOperationMasked(op));
+      ops.functions = ops.functions.filter((op) => !isBoundOperationMasked(op));
+
+      if (ops.actions.length === 0 && ops.functions.length === 0) {
+        boundOperations.delete(bindingTypeFQN);
+      }
+    }
+
+    // Mask unbound operations
+    for (let i = unboundActions.length - 1; i >= 0; i--) {
+      const op = unboundActions[i];
+      if (!op) continue;
+      if (isUnboundOperationMasked(op)) {
+        unboundActions.splice(i, 1);
+      }
+    }
+    for (let i = unboundFunctions.length - 1; i >= 0; i--) {
+      const op = unboundFunctions[i];
+      if (!op) continue;
+      if (isUnboundOperationMasked(op)) {
+        unboundFunctions.splice(i, 1);
+      }
+    }
   }
 
   // Helper to generate operation code
