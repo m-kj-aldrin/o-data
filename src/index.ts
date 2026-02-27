@@ -14,7 +14,7 @@ import type {
   BoundActionKeysForEntitySet,
   BoundFunctionKeysForEntitySet,
 } from './types';
-import { buildQueryableEntity } from './runtime';
+import { buildQueryableEntity } from './runtime.js';
 import type {
   CollectionQueryResponse,
   SingleQueryResponse,
@@ -29,7 +29,7 @@ import type {
   SingleQueryObject,
   QueryOperationOptions,
 } from './query';
-import { buildQueryString, buildCreateRequest, buildUpdateRequest, buildActionRequest, buildFunctionRequest } from './serialization';
+import { buildQueryString, buildCreateRequest, buildUpdateRequest, buildActionRequest, buildFunctionRequest } from './serialization.js';
 import type {
   CreateObject,
   UpdateObject,

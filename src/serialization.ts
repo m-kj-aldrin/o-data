@@ -4,8 +4,8 @@
 
 import type { QueryableEntity } from './types';
 import type { CollectionQueryObject, SingleQueryObject, SingleExpandObject } from './query';
-import { createFilterHelpers, serializeFilter } from './filter';
-import { buildQueryableEntity, findEntitySetsForEntityType } from './runtime';
+import { createFilterHelpers, serializeFilter } from './filter.js';
+import { buildQueryableEntity, findEntitySetsForEntityType } from './runtime.js';
 import type { Schema, ODataType, NavigationType } from './schema';
 import type { CreateObject, UpdateObject, CreateOperationOptions, UpdateOperationOptions } from './operations';
 

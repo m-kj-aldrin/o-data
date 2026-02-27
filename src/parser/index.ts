@@ -1,6 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import * as fs from 'fs';
 import path, { dirname } from 'path';
+import { pathToFileURL } from 'url';
 import type { ParserConfig, ExcludeFilters, MaskRules, SelectionMode } from './config';
 
 // ----------------------------------------------------------------------------
@@ -109,23 +110,30 @@ async function loadConfig(configPathArgFromCaller?: string): Promise<{
       throw new Error(`Config file not found: ${configPath}`);
     }
   } else {
-    // Look for default config file in cwd
-    const defaultConfigPath = path.join(process.cwd(), 'odata-parser.config.ts');
-    if (fs.existsSync(defaultConfigPath)) {
-      configPath = defaultConfigPath;
+    // Look for default config file in cwd (prefer JS for Node compatibility)
+    const root = process.cwd();
+    const jsConfigPath = path.join(root, 'odata-parser.config.js');
+    const tsConfigPath = path.join(root, 'odata-parser.config.ts');
+
+    if (fs.existsSync(jsConfigPath)) {
+      configPath = jsConfigPath;
+    } else if (fs.existsSync(tsConfigPath)) {
+      // TS config is supported primarily for local Bun-based development
+      configPath = tsConfigPath;
     }
   }
 
   // Config file is required
   if (!configPath) {
     throw new Error(
-      'Config file not found. Either provide a path or create odata-parser.config.ts in the current directory.'
+      'Config file not found. Either provide a path or create odata-parser.config.js in the current directory.'
     );
   }
 
   // Load config
   try {
-    const configModule = await import(configPath);
+    const configUrl = pathToFileURL(configPath).href;
+    const configModule = await import(configUrl);
     const config: ParserConfig = configModule.default || configModule;
     
     if (!config.inputPath || !config.outputPath) {

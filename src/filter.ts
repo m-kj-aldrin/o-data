@@ -4,7 +4,7 @@
 
 import type { QueryableEntity, EntitySetToQueryableEntity } from './types';
 import type { Schema } from './schema';
-import { buildQueryableEntity } from './runtime';
+import { buildQueryableEntity } from './runtime.js';
 
 // Helper to resolve navigation target QueryableEntity from targetEntitysetKey
 type ResolveNavTarget<
