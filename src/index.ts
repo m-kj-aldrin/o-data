@@ -104,7 +104,7 @@ export class OdataClient<S extends Schema<S>> {
       throw new Error(`Action '${String(name)}' not found`);
     }
     
-    const actionDef = this.#schema.actions[actionName];
+    const actionDef = this.#schema.actions![actionName]!;
     const parameterDefs = actionDef.parameters;
     const namespace = this.#schema.namespace || '';
 
@@ -149,7 +149,7 @@ export class OdataClient<S extends Schema<S>> {
       } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
     }
 
-    const json = await response.json();
+    const json = await response.json() as Record<string, unknown>;
     const { value, ...odataProps } = json;
     return {
       ok: true,
@@ -217,7 +217,7 @@ export class OdataClient<S extends Schema<S>> {
       } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
     }
 
-    const json = await response.json();
+    const json = await response.json() as Record<string, unknown>;
     const { value, ...odataProps } = json;
     if (value !== undefined) {
       return {
@@ -502,7 +502,8 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       throw new Error(`Action '${String(name)}' not found`);
     }
     
-    const actionDef = this.#schema.actions[name];
+    const actions = this.#schema.actions!;
+    const actionDef = actions[name as string]!;
     const parameterDefs = actionDef.parameters;
     const namespace = this.#schema.namespace || '';
 
@@ -547,7 +548,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
     }
 
-    const json = await response.json();
+    const json = await response.json() as Record<string, unknown>;
     const { value, ...odataProps } = json;
     return {
       ok: true,
@@ -603,7 +604,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
     }
 
-    const json = await response.json();
+    const json = await response.json() as Record<string, unknown>;
     const { value, ...odataProps } = json;
     if (value !== undefined) {
       return {

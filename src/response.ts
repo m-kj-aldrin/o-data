@@ -225,11 +225,10 @@ export type ActionResultError = ODataError;
 
 export type ActionResponse<
   S extends Schema<S> = any, 
-  R extends ODataType<any> | undefined = any
-> = ODataResponse<
-  ActionResultData<R extends undefined ? void : ODataTypeToTS<R, S>>,
-  ActionResultError
->;
+  R extends ODataType<any> | undefined = undefined
+> = R extends undefined
+  ? ODataResponse<ActionResultData<void>, ActionResultError>
+  : ODataResponse<ActionResultData<ODataTypeToTS<Exclude<R, undefined>, S>>, ActionResultError>;
 
 // Function result data
 export type FunctionResultData<R = any> = {
