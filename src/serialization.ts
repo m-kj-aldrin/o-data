@@ -248,8 +248,12 @@ export function transformCreateObjectForBind<S extends Schema<S>>(
           const targetEntitysetKey = Array.isArray(navDef.targetEntitysetKey)
             ? navDef.targetEntitysetKey[0]
             : navDef.targetEntitysetKey;
-          const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-          transformed[key] = transformCreateObjectForBind(value, targetEntity, schema);
+          if (targetEntitysetKey != null) {
+            const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+            transformed[key] = transformCreateObjectForBind(value, targetEntity, schema);
+          } else {
+            transformed[key] = value;
+          }
         } else {
           transformed[key] = value;
         }
@@ -274,12 +278,16 @@ export function transformCreateObjectForBind<S extends Schema<S>>(
             const targetEntitysetKey = Array.isArray(navDef.targetEntitysetKey)
               ? navDef.targetEntitysetKey[0]
               : navDef.targetEntitysetKey;
-            const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-            transformed[key] = (value as any[]).map((item: any) =>
-              typeof item === 'object' && item !== null
-                ? transformCreateObjectForBind(item, targetEntity, schema)
-                : item
-            );
+            if (targetEntitysetKey != null) {
+              const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+              transformed[key] = (value as any[]).map((item: any) =>
+                typeof item === 'object' && item !== null
+                  ? transformCreateObjectForBind(item, targetEntity, schema)
+                  : item
+              );
+            } else {
+              transformed[key] = value;
+            }
           }
         } else {
           transformed[key] = value;
@@ -511,8 +519,12 @@ export function transformActionParameters<S extends Schema<S>>(
           transformed[`${key}@odata.bind`] = `/${targetEntitysetKey}(${value})`;
         } else if (typeof value === 'object' && value !== null) {
           // Deep insert - recursive transformation
-          const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-          transformed[key] = transformCreateObjectForBind(value, targetEntity, schema);
+          if (targetEntitysetKey != null) {
+            const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+            transformed[key] = transformCreateObjectForBind(value, targetEntity, schema);
+          } else {
+            transformed[key] = value;
+          }
         } else {
           transformed[key] = value;
         }
@@ -531,12 +543,16 @@ export function transformActionParameters<S extends Schema<S>>(
             );
           } else {
             // Array of objects - deep insert (recursive)
-            const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-            transformed[key] = (value as any[]).map((item: any) =>
-              typeof item === 'object' && item !== null
-                ? transformCreateObjectForBind(item, targetEntity, schema)
-                : item
-            );
+            if (targetEntitysetKey != null) {
+              const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+              transformed[key] = (value as any[]).map((item: any) =>
+                typeof item === 'object' && item !== null
+                  ? transformCreateObjectForBind(item, targetEntity, schema)
+                  : item
+              );
+            } else {
+              transformed[key] = value;
+            }
           }
         } else {
           transformed[key] = value;
