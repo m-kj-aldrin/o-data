@@ -253,6 +253,28 @@ Options for update mirror create: `select`, `prefer.return_representation`, cust
 
 ---
 
+## Batch requests
+
+Use `client.batch()` to build a `$batch` request with the same fluent API. Operations are queued and sent in a single multipart request:
+
+- **GET, query, function** – outside changesets (read-only)
+- **Create, update, delete, action** – inside changesets (atomic)
+
+```ts
+const batch = client.batch();
+
+batch.entitysets('incidents').query({ select: ['title'], top: 10 });
+batch.entitysets('incidents').create({ title: 'New' });
+batch.entitysets('incidents').key('guid-123').update({ title: 'Updated' });
+batch.entitysets('incidents').key('guid-456').delete();
+
+const response = await batch.execute();
+```
+
+Use `batch.buildRequest()` to obtain the `Request` without sending it.
+
+---
+
 ## Actions and functions
 
 ### Bound actions
