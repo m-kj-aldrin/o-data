@@ -15,6 +15,9 @@ import type {
   BoundFunctionKeysForEntitySet,
 } from './types';
 import { buildQueryableEntity } from './runtime.js';
+import { OdataBatch } from './batch.js';
+
+export { OdataBatch };
 import type {
   CollectionQueryResponse,
   SingleQueryResponse,
@@ -241,6 +244,20 @@ export class OdataClient<S extends Schema<S>> {
         ...odataProps,  // @odata.context, etc.
       },
     } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
+  }
+
+  /**
+   * Create a new batch builder.
+   *
+   * The returned batch can be used with the same fluent API surface as the
+   * regular client, but operations are queued into a $batch request instead
+   * of being executed immediately.
+   */
+  batch(): OdataBatch<S> {
+    return new OdataBatch(this.#schema, {
+      baseUrl: this.#options.baseUrl,
+      transport: this.#options.transport,
+    });
   }
 }
 
