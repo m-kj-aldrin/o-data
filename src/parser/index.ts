@@ -83,7 +83,7 @@ function normalizeMaskRules(mask?: MaskRules): NormalizedMaskRules {
   };
 }
 
-async function loadConfig(): Promise<{
+async function loadConfig(configPathArgFromCaller?: string): Promise<{
   inputFile: string;
   outputFile: string;
   wantedEntities: string[] | 'ALL';
@@ -98,7 +98,7 @@ async function loadConfig(): Promise<{
   onlyUnboundFunctions?: string[];
   mask: NormalizedMaskRules;
 }> {
-  const configPathArg = process.argv[2];
+  const configPathArg = configPathArgFromCaller ?? process.argv[2];
   let configPath: string | null = null;
 
   // Check for config path in first CLI arg
@@ -106,8 +106,7 @@ async function loadConfig(): Promise<{
     const root = process.cwd();
     configPath = path.isAbsolute(configPathArg) ? configPathArg : path.join(root, configPathArg);
     if (!fs.existsSync(configPath)) {
-      console.error(`Config file not found: ${configPath}`);
-      process.exit(1);
+      throw new Error(`Config file not found: ${configPath}`);
     }
   } else {
     // Look for default config file in cwd
@@ -119,9 +118,9 @@ async function loadConfig(): Promise<{
 
   // Config file is required
   if (!configPath) {
-    console.error('Usage: generate-schema [<path-to-config-file>]');
-    console.error('  Config file not found. Either provide a path or create odata-parser.config.ts in the current directory');
-    process.exit(1);
+    throw new Error(
+      'Config file not found. Either provide a path or create odata-parser.config.ts in the current directory.'
+    );
   }
 
   // Load config
@@ -130,8 +129,7 @@ async function loadConfig(): Promise<{
     const config: ParserConfig = configModule.default || configModule;
     
     if (!config.inputPath || !config.outputPath) {
-      console.error('Config must specify inputPath and outputPath');
-      process.exit(1);
+      throw new Error('Config must specify inputPath and outputPath');
     }
 
     const configDir = path.dirname(configPath);
@@ -154,8 +152,7 @@ async function loadConfig(): Promise<{
       mask: normalizeMaskRules(config.mask),
     };
   } catch (error) {
-    console.error(`Error loading config file: ${error}`);
-    process.exit(1);
+    throw new Error(`Error loading config file: ${String(error)}`);
   }
 }
 
@@ -239,9 +236,9 @@ interface ProcessedOperation {
 // Main Conversion Logic
 // ----------------------------------------------------------------------------
 
-async function main() {
+export async function generateSchema(configPath?: string): Promise<void> {
   // Load configuration
-  const config = await loadConfig();
+  const config = await loadConfig(configPath);
   const INPUT_FILE = config.inputFile;
   const OUTPUT_FILE = config.outputFile;
   const WANTED_ENTITIES = config.wantedEntities;
@@ -257,8 +254,7 @@ async function main() {
   const MASK = config.mask;
 
   if (!fs.existsSync(INPUT_FILE)) {
-    console.error(`Input file not found: ${INPUT_FILE}`);
-    process.exit(1);
+    throw new Error(`Input file not found: ${INPUT_FILE}`);
   }
 
   const xmlData = fs.readFileSync(INPUT_FILE, 'utf-8');
@@ -296,8 +292,7 @@ async function main() {
 
   const mainSchema = schemas.find((s) => s.EntityType && s.EntityType.length > 0) || schemas[0];
   if (!mainSchema) {
-    console.error('No schema found');
-    process.exit(1);
+    throw new Error('No schema found in CSDL document');
   }
   const namespace = mainSchema['@_Namespace'];
   const alias = mainSchema['@_Alias'] || '';
@@ -1381,5 +1376,3 @@ async function main() {
   console.log(`Included EntityTypes: ${Array.from(includedEntityTypes).map(getShortName).sort().join(', ')}`);
   console.log(`Included ComplexTypes: ${Array.from(includedComplexTypes).map(getShortName).sort().join(', ')}`);
 }
-
-main().catch(console.error);
