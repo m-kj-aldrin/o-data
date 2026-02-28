@@ -14,6 +14,9 @@ const client = new OdataClient(coop_crm_schema, {
   transport: mockTransport,
 });
 
+// Batch uses full pathname from request URL (e.g. /api/data/v9.0/incidents), not just entityset path
+const batchPathPrefix = '/api/data/v9.0';
+
 beforeEach(() => {
   capturedRequests = [];
 });
@@ -56,13 +59,13 @@ test('$batch - mix queries and CUD into correct groups', async () => {
 
   const body = await getRequestBodyText(req);
 
-  // Query should be outside any changeset
-  expect(body).toContain('GET /incidents?$select=title HTTP/1.1');
+  // Query should be outside any changeset (full path inside batch)
+  expect(body).toContain(`GET ${batchPathPrefix}/incidents?$select=title HTTP/1.1`);
 
-  // Create and update should be inside changeset with POST/PATCH
+  // Create and update should be inside changeset with POST/PATCH (full path)
   expect(body).toContain('Content-Type: multipart/mixed; boundary=changeset_');
-  expect(body).toContain('POST /incidents HTTP/1.1');
-  expect(body).toContain('PATCH /incidents(guid-123) HTTP/1.1');
+  expect(body).toContain(`POST ${batchPathPrefix}/incidents HTTP/1.1`);
+  expect(body).toContain(`PATCH ${batchPathPrefix}/incidents(guid-123) HTTP/1.1`);
 
   // Create body should include the payload
   expect(body).toContain('"title":"Created from batch"');
@@ -77,7 +80,7 @@ test('$batch - delete in changeset', async () => {
 
   expect(capturedRequests.length).toBe(1);
   const body = await getRequestBodyText(capturedRequests[0]!);
-  expect(body).toContain('DELETE /incidents(guid-456) HTTP/1.1');
+  expect(body).toContain(`DELETE ${batchPathPrefix}/incidents(guid-456) HTTP/1.1`);
   expect(body).toContain('Content-ID: 1');
 });
 
