@@ -87,10 +87,10 @@ export type CollectionQueryData<
   O = any
 > = Q extends CollectionQueryObject<E, infer S>
   ? {
-      data: ExtractQueryResultShape<E, Q, S>[];
+      value: ExtractQueryResultShape<E, Q, S>[];
     } & ODataMetadata
   : {
-      data: any[];
+      value: any[];
     } & ODataMetadata;
 
 export type CollectionQueryError = ODataError;
@@ -108,25 +108,22 @@ export type CollectionQueryResponse<
 };
 
 // Single query result data
+// S is passed from the client so we don't rely on infer S from Q (which fails when expand is present).
 export type SingleQueryData<
   E extends QueryableEntity = any,
-  Q extends SingleQueryObject<E, any> = any
-> = Q extends SingleQueryObject<E, infer S>
-  ? {
-      data: ExtractQueryResultShape<E, Q, S>;
-    } & ODataMetadata
-  : {
-      data: any;
-    } & ODataMetadata;
+  Q extends SingleQueryObject<E, any> = any,
+  S extends Schema<S> = Schema<any>
+> = ExtractQueryResultShape<E, Q, S> & ODataMetadata;
 
 export type SingleQueryError = ODataError;
 
 export type SingleQueryResponse<
   E extends QueryableEntity = any,
   Q extends SingleQueryObject<E> = any,
-  O = any
+  O = any,
+  Sch extends Schema<Sch> = Schema<any>
 > = ODataResponse<
-  SingleQueryData<E, Q>,
+  SingleQueryData<E, Q, Sch>,
   SingleQueryError
 >;
 
@@ -154,10 +151,10 @@ export type CreateResultData<
   QE extends QueryableEntity = any,
   O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } } = any
 > = O['prefer'] extends { return_representation: true }
-  ? ({ data: CreateDataShape<QE, O> } & ODataMetadata)
+  ? CreateDataShape<QE, O> & ODataMetadata
   : O['select'] extends readonly (keyof QE['properties'])[]
-  ? ({ data: CreateDataShape<QE, O> } & ODataMetadata)
-  : { data: undefined };
+  ? CreateDataShape<QE, O> & ODataMetadata
+  : ODataMetadata;
 
 export type CreateResultError = ODataError;
 
@@ -187,10 +184,10 @@ export type UpdateResultData<
   QE extends QueryableEntity = any,
   O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } } = any
 > = O['prefer'] extends { return_representation: true }
-  ? ({ data: UpdateDataShape<QE, O> } & ODataMetadata)
+  ? UpdateDataShape<QE, O> & ODataMetadata
   : O['select'] extends readonly (keyof QE['properties'])[]
-  ? ({ data: UpdateDataShape<QE, O> } & ODataMetadata)
-  : { data: undefined };
+  ? UpdateDataShape<QE, O> & ODataMetadata
+  : ODataMetadata;
 
 export type UpdateResultError = ODataError;
 
@@ -206,7 +203,7 @@ export type UpdateResponse<
 // Delete Response Types
 // ============================================================================
 
-export type DeleteResultData = { data: undefined } & ODataMetadata;
+export type DeleteResultData = ODataMetadata;
 
 export type DeleteResultError = ODataError;
 
@@ -217,9 +214,9 @@ export type DeleteResponse = ODataResponse<DeleteResultData, DeleteResultError>;
 // ============================================================================
 
 // Action result data
-export type ActionResultData<R = any> = {
-  data: R extends undefined ? void : R;
-} & ODataMetadata;
+export type ActionResultData<R = any> = R extends undefined | void
+  ? ODataMetadata
+  : R & ODataMetadata;
 
 export type ActionResultError = ODataError;
 
@@ -231,9 +228,7 @@ export type ActionResponse<
   : ODataResponse<ActionResultData<ODataTypeToTS<Exclude<R, undefined>, S>>, ActionResultError>;
 
 // Function result data
-export type FunctionResultData<R = any> = {
-  data: R;
-} & ODataMetadata;
+export type FunctionResultData<R = any> = R & ODataMetadata;
 
 export type FunctionResultError = ODataError;
 

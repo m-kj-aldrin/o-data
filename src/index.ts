@@ -15,6 +15,11 @@ import type {
   BoundFunctionKeysForEntitySet,
 } from './types';
 import { buildQueryableEntity } from './runtime.js';
+import { OdataBatch } from './batch.js';
+import type { OdataBatchPublic } from './batch.js';
+
+export { OdataBatch };
+export type { OdataBatchPublic };
 import type {
   CollectionQueryResponse,
   SingleQueryResponse,
@@ -137,29 +142,13 @@ export class OdataClient<S extends Schema<S>> {
       } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
     }
 
-    if (response.status === 204) {
-      return {
-        ok: true,
-        status: 204,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: undefined,
-        },
-      } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
-    }
-
-    const json = await response.json() as Record<string, unknown>;
-    const { value, ...odataProps } = json;
+    const result = response.status === 204 ? {} : await response.json();
     return {
       ok: true,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data: value !== undefined ? value : json,
-        ...odataProps,  // @odata.context, etc.
-      },
+      result,
     } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
   }
 
@@ -217,30 +206,33 @@ export class OdataClient<S extends Schema<S>> {
       } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
     }
 
-    const json = await response.json() as Record<string, unknown>;
-    const { value, ...odataProps } = json;
-    if (value !== undefined) {
-      return {
-        ok: true,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: value,
-          ...odataProps,  // @odata.context, etc.
-        },
-      } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
+    let result: unknown;
+    try {
+      result = await response.json();
+    } catch {
+      result = {};
     }
     return {
       ok: true,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data: json,
-        ...odataProps,  // @odata.context, etc.
-      },
+      result,
     } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
+  }
+
+  /**
+   * Create a new batch builder.
+   *
+   * The returned batch can be used with the same fluent API surface as the
+   * regular client, but operations are queued into a $batch request instead
+   * of being executed immediately.
+   */
+  batch(): OdataBatchPublic<S> {
+    return new OdataBatch(this.#schema, {
+      baseUrl: this.#options.baseUrl,
+      transport: this.#options.transport,
+    });
   }
 }
 
@@ -382,7 +374,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
   async query<Q extends SingleQueryObject<QE, S>, O extends QueryOperationOptions>(
     q: Q,
     o?: O
-  ): Promise<SingleQueryResponse<QE, Q, O>> {
+  ): Promise<SingleQueryResponse<QE, Q, O, S>> {
     const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
     const url = this.buildUrl(queryString);
     const request = new Request(url);
@@ -395,7 +387,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       statusText: response.statusText,
       headers: response.headers,
       result: data,
-    } as SingleQueryResponse<QE, Q, O>;
+    } as SingleQueryResponse<QE, Q, O, S>;
   }
 
   /**
@@ -536,29 +528,13 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
     }
 
-    if (response.status === 204) {
-      return {
-        ok: true,
-        status: 204,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: undefined,
-        },
-      } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
-    }
-
-    const json = await response.json() as Record<string, unknown>;
-    const { value, ...odataProps } = json;
+    const result = response.status === 204 ? {} : await response.json();
     return {
       ok: true,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data: value !== undefined ? value : json,
-        ...odataProps,  // @odata.context, etc.
-      },
+      result,
     } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
   }
 
@@ -604,29 +580,18 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
     }
 
-    const json = await response.json() as Record<string, unknown>;
-    const { value, ...odataProps } = json;
-    if (value !== undefined) {
-      return {
-        ok: true,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: value,
-          ...odataProps,  // @odata.context, etc.
-        },
-      } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
+    let result: unknown;
+    try {
+      result = await response.json();
+    } catch {
+      result = {};
     }
     return {
       ok: true,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data: json,
-        ...odataProps,  // @odata.context, etc.
-      },
+      result,
     } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
   }
 }
