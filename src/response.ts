@@ -108,21 +108,22 @@ export type CollectionQueryResponse<
 };
 
 // Single query result data
+// S is passed from the client so we don't rely on infer S from Q (which fails when expand is present).
 export type SingleQueryData<
   E extends QueryableEntity = any,
-  Q extends SingleQueryObject<E, any> = any
-> = Q extends SingleQueryObject<E, infer S>
-  ? ExtractQueryResultShape<E, Q, S> & ODataMetadata
-  : any & ODataMetadata;
+  Q extends SingleQueryObject<E, any> = any,
+  S extends Schema<S> = Schema<any>
+> = ExtractQueryResultShape<E, Q, S> & ODataMetadata;
 
 export type SingleQueryError = ODataError;
 
 export type SingleQueryResponse<
   E extends QueryableEntity = any,
   Q extends SingleQueryObject<E> = any,
-  O = any
+  O = any,
+  Sch extends Schema<Sch> = Schema<any>
 > = ODataResponse<
-  SingleQueryData<E, Q>,
+  SingleQueryData<E, Q, Sch>,
   SingleQueryError
 >;
 

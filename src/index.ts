@@ -374,7 +374,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
   async query<Q extends SingleQueryObject<QE, S>, O extends QueryOperationOptions>(
     q: Q,
     o?: O
-  ): Promise<SingleQueryResponse<QE, Q, O>> {
+  ): Promise<SingleQueryResponse<QE, Q, O, S>> {
     const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
     const url = this.buildUrl(queryString);
     const request = new Request(url);
@@ -387,7 +387,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       statusText: response.statusText,
       headers: response.headers,
       result: data,
-    } as SingleQueryResponse<QE, Q, O>;
+    } as SingleQueryResponse<QE, Q, O, S>;
   }
 
   /**
