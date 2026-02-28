@@ -253,7 +253,7 @@ export type NavigationsTarget<N extends { target: any }> = N['target'];
 // Schema Builder Function
 // ============================================================================
 
-export function schema<S extends Schema<S>>(definition: S): S {
+export function schema<const S extends Schema<S>>(definition: S): S {
   // Identity function - schema stays raw, no runtime transformation
   // Optional: Add runtime validation here (circular inheritance, etc.)
   return definition;

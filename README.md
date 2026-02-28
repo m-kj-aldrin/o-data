@@ -105,6 +105,8 @@ const client = new OdataClient(crmSchema, {
 
 ## Querying data
 
+OData response shapes: **collections** use `result.value`; **single-entity, CRUD, actions, and functions** use a flat `result` (data at top level alongside `@odata.*` metadata).
+
 ### Collection queries
 
 ```ts
@@ -116,7 +118,7 @@ const response = await client.entitysets("incidents").query({
 });
 
 if (response.ok) {
-  const incidents = response.result.data; // typed by schema + query
+  const incidents = response.result.value; // typed by schema + query
 }
 ```
 
@@ -296,7 +298,7 @@ const res = await client
   });
 
 if (res.ok) {
-  const ok: boolean = res.result.data; // mapped from Edm.Boolean
+  const ok: boolean = res.result.value; // mapped from Edm.Boolean (flat at top level)
 }
 ```
 
@@ -323,7 +325,7 @@ const res = await client
   });
 
 if (res.ok) {
-  const count: number = res.result.data;
+  const count: number = res.result.value; // flat at top level
 }
 ```
 

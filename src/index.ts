@@ -140,29 +140,13 @@ export class OdataClient<S extends Schema<S>> {
       } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
     }
 
-    if (response.status === 204) {
-      return {
-        ok: true,
-        status: 204,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: undefined,
-        },
-      } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
-    }
-
-    const json = await response.json() as Record<string, unknown>;
-    const { value, ...odataProps } = json;
+    const result = response.status === 204 ? {} : await response.json();
     return {
       ok: true,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data: value !== undefined ? value : json,
-        ...odataProps,  // @odata.context, etc.
-      },
+      result,
     } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
   }
 
@@ -220,29 +204,18 @@ export class OdataClient<S extends Schema<S>> {
       } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
     }
 
-    const json = await response.json() as Record<string, unknown>;
-    const { value, ...odataProps } = json;
-    if (value !== undefined) {
-      return {
-        ok: true,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: value,
-          ...odataProps,  // @odata.context, etc.
-        },
-      } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
+    let result: unknown;
+    try {
+      result = await response.json();
+    } catch {
+      result = {};
     }
     return {
       ok: true,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data: json,
-        ...odataProps,  // @odata.context, etc.
-      },
+      result,
     } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
   }
 
@@ -553,29 +526,13 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
     }
 
-    if (response.status === 204) {
-      return {
-        ok: true,
-        status: 204,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: undefined,
-        },
-      } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
-    }
-
-    const json = await response.json() as Record<string, unknown>;
-    const { value, ...odataProps } = json;
+    const result = response.status === 204 ? {} : await response.json();
     return {
       ok: true,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data: value !== undefined ? value : json,
-        ...odataProps,  // @odata.context, etc.
-      },
+      result,
     } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
   }
 
@@ -621,29 +578,18 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
     }
 
-    const json = await response.json() as Record<string, unknown>;
-    const { value, ...odataProps } = json;
-    if (value !== undefined) {
-      return {
-        ok: true,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: {
-          data: value,
-          ...odataProps,  // @odata.context, etc.
-        },
-      } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
+    let result: unknown;
+    try {
+      result = await response.json();
+    } catch {
+      result = {};
     }
     return {
       ok: true,
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-      result: {
-        data: json,
-        ...odataProps,  // @odata.context, etc.
-      },
+      result,
     } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
   }
 }
