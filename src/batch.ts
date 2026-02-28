@@ -26,7 +26,7 @@ import {
   buildActionRequest,
   buildFunctionRequest,
   normalizePath,
-} from './serialization';
+} from './serialization.js';
 import type {
   CreateObject,
   UpdateObject,
@@ -43,7 +43,7 @@ import type {
   ActionResponse,
   FunctionResponse,
 } from './response';
-import { buildQueryableEntity } from './runtime';
+import { buildQueryableEntity } from './runtime.js';
 
 // ============================================================================
 // Internal types
