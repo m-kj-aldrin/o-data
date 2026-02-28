@@ -243,18 +243,13 @@ export class OdataBatch<S extends Schema<S>> {
     const batchBoundary = `batch_${Math.random().toString(36).slice(2)}`;
     const lines: string[] = [];
 
-    const baseUrl = this.#options.baseUrl.endsWith('/')
-      ? this.#options.baseUrl
-      : this.#options.baseUrl + '/';
-
+    // Use full pathname so the batch request line is e.g. "POST /api/data/v9.0/emails HTTP/1.1".
+    // Dynamics (and some other OData services) resolve relative URLs in batch from the host root,
+    // so a path relative to the service root (e.g. "/emails") would become https://host/emails and 404.
     const toRelativePath = (url: string): string => {
-      const serviceUrl = new URL(baseUrl);
       const fullUrl = new URL(url);
-      if (serviceUrl.origin === fullUrl.origin && fullUrl.pathname.startsWith(serviceUrl.pathname)) {
-        const relativePath = fullUrl.pathname.slice(serviceUrl.pathname.length);
-        return '/' + relativePath.replace(/^\/+/, '') + fullUrl.search;
-      }
-      return fullUrl.pathname + fullUrl.search;
+      const path = fullUrl.pathname.replace(/\/+$/, '') || '/';
+      return path + fullUrl.search;
     };
 
     const pushPartForRequest = (req: BatchRequest, bodyText: string, contentId?: number) => {
