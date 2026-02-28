@@ -16,8 +16,10 @@ import type {
 } from './types';
 import { buildQueryableEntity } from './runtime.js';
 import { OdataBatch } from './batch.js';
+import type { OdataBatchPublic } from './batch.js';
 
 export { OdataBatch };
+export type { OdataBatchPublic };
 import type {
   CollectionQueryResponse,
   SingleQueryResponse,
@@ -226,7 +228,7 @@ export class OdataClient<S extends Schema<S>> {
    * regular client, but operations are queued into a $batch request instead
    * of being executed immediately.
    */
-  batch(): OdataBatch<S> {
+  batch(): OdataBatchPublic<S> {
     return new OdataBatch(this.#schema, {
       baseUrl: this.#options.baseUrl,
       transport: this.#options.transport,

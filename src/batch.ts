@@ -183,7 +183,7 @@ export class OdataBatch<S extends Schema<S>> {
   /**
    * Add a prepared request to the batch.
    */
-  addRequest(kind: BatchRequestKind, request: Request, inChangeset: boolean): number {
+  private addRequest(kind: BatchRequestKind, request: Request, inChangeset: boolean): number {
     const id = this.#nextId++;
     this.#requests.push({ id, kind, request, inChangeset });
     return id;
@@ -335,6 +335,15 @@ export class OdataBatch<S extends Schema<S>> {
     return this.#options.transport(request);
   }
 }
+
+/**
+ * Public API type for OdataBatch. Use this when typing batch variables.
+ * Excludes internal request-registry methods used by operation builders.
+ */
+export type OdataBatchPublic<S extends Schema<S>> = Pick<
+  OdataBatch<S>,
+  'entitysets' | 'action' | 'function' | 'buildRequest' | 'execute'
+>;
 
 // ============================================================================
 // Batch Collection & Single Operations
