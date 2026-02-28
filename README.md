@@ -20,6 +20,8 @@ It has two parts:
   - Supports `@odata.bind` for single and collection navigations, deep inserts, and batch references.
 - **Actions & functions**
   - Bound and unbound operations, with correct URL shapes and parameter serialization.
+- **Batch requests ($batch)**
+  - Same fluent API as the client; queue operations and send them in a single multipart request. GET/query/function outside changesets; create/update/delete/action inside changesets.
 - **Schema generator from CSDL**
   - CLI reads your OData metadata XML and emits a typed `schema({...})` module.
   - Powerful include/exclude/masking rules for keeping the generated surface small and relevant.
@@ -263,15 +265,17 @@ Use `client.batch()` to build a `$batch` request with the same fluent API. Opera
 ```ts
 const batch = client.batch();
 
-batch.entitysets('incidents').query({ select: ['title'], top: 10 });
-batch.entitysets('incidents').create({ title: 'New' });
-batch.entitysets('incidents').key('guid-123').update({ title: 'Updated' });
-batch.entitysets('incidents').key('guid-456').delete();
+batch.entitysets("incidents").query({ select: ["title"], top: 10 });
+batch.entitysets("incidents").create({ title: "New" });
+batch.entitysets("incidents").key("guid-123").update({ title: "Updated" });
+batch.entitysets("incidents").key("guid-456").delete();
 
 const response = await batch.execute();
 ```
 
-Use `batch.buildRequest()` to obtain the `Request` without sending it.
+`batch.execute()` returns the raw multipart `Response`; parsing individual operation responses is the application's responsibility. Use `batch.buildRequest()` to obtain the `Request` without sending it.
+
+You can also use `.navigate(...)`, bound and unbound actions, and functions within a batch with the same API as the client.
 
 ---
 
@@ -416,7 +420,7 @@ const client = new OdataClient(myservice_schema, {
 ## Status and limitations
 
 - The library is still **early (0.0.x)**; APIs may change.
-- Some operations are marked `TODO` in the runtime (e.g. delete support, collection‑bound actions/functions implementation, richer pagination).
+- Some operations are marked `TODO` in the runtime (e.g. delete support outside batch, collection‑bound actions/functions implementation, richer pagination).
 - The generator doesn’t yet handle OData operation overloading beyond keeping the first operation per name.
 
 ---

@@ -142,7 +142,7 @@ export class OdataBatch<S extends Schema<S>> {
       false
     );
 
-    return this.#addRequest('action-unbound', request, true);
+    return this.addRequest('action-unbound', request, true);
   }
 
   /**
@@ -177,13 +177,13 @@ export class OdataBatch<S extends Schema<S>> {
       false
     );
 
-    return this.#addRequest('function-unbound', request, false);
+    return this.addRequest('function-unbound', request, false);
   }
 
   /**
    * Add a prepared request to the batch.
    */
-  #addRequest(kind: BatchRequestKind, request: Request, inChangeset: boolean): number {
+  addRequest(kind: BatchRequestKind, request: Request, inChangeset: boolean): number {
     const id = this.#nextId++;
     this.#requests.push({ id, kind, request, inChangeset });
     return id;
@@ -191,47 +191,47 @@ export class OdataBatch<S extends Schema<S>> {
 
   /** @internal Used by operation builders to register requests. */
   addCollectionQuery<QE extends QueryableEntity>(request: Request): number {
-    return this.#addRequest('query-collection', request, false);
+    return this.addRequest('query-collection', request, false);
   }
 
   /** @internal */
   addSingleQuery<QE extends QueryableEntity>(request: Request): number {
-    return this.#addRequest('query-single', request, false);
+    return this.addRequest('query-single', request, false);
   }
 
   /** @internal */
   addCreate<QE extends QueryableEntity>(request: Request): number {
-    return this.#addRequest('create', request, true);
+    return this.addRequest('create', request, true);
   }
 
   /** @internal */
   addUpdate<QE extends QueryableEntity>(request: Request): number {
-    return this.#addRequest('update', request, true);
+    return this.addRequest('update', request, true);
   }
 
   /** @internal */
   addDelete(request: Request): number {
-    return this.#addRequest('delete', request, true);
+    return this.addRequest('delete', request, true);
   }
 
   /** @internal */
   addBoundCollectionAction(request: Request): number {
-    return this.#addRequest('action-bound-collection', request, true);
+    return this.addRequest('action-bound-collection', request, true);
   }
 
   /** @internal */
   addBoundEntityAction(request: Request): number {
-    return this.#addRequest('action-bound-entity', request, true);
+    return this.addRequest('action-bound-entity', request, true);
   }
 
   /** @internal */
   addBoundCollectionFunction(request: Request): number {
-    return this.#addRequest('function-bound-collection', request, false);
+    return this.addRequest('function-bound-collection', request, false);
   }
 
   /** @internal */
   addBoundEntityFunction(request: Request): number {
-    return this.#addRequest('function-bound-entity', request, false);
+    return this.addRequest('function-bound-entity', request, false);
   }
 
   /**
