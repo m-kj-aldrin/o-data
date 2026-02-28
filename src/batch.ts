@@ -98,17 +98,12 @@ export class OdataBatch<S extends Schema<S>> {
     this.#options = options;
   }
 
-  /** Internal: base URL for building request URLs. */
-  _getBaseUrl(): string {
-    return this.#options.baseUrl;
-  }
-
   /**
    * Access an entityset within this batch.
    */
   entitysets<E extends EntitySetNames<S>>(entityset: E): BatchCollectionOperation<S, EntitySetToQE<S, E>, E> {
     const entity = buildQueryableEntity(this.#schema, String(entityset)) as EntitySetToQE<S, E>;
-    return new BatchCollectionOperation(this, this.#schema, entity, entityset, String(entityset));
+    return new BatchCollectionOperation(this, this.#schema, entity, entityset, String(entityset), this.#options.baseUrl);
   }
 
   /**
@@ -194,52 +189,48 @@ export class OdataBatch<S extends Schema<S>> {
     return id;
   }
 
-  /**
-   * Internal: used by operation builders to register their requests.
-   */
-  _addCollectionQuery<QE extends QueryableEntity>(
-    request: Request
-  ): number {
+  /** @internal Used by operation builders to register requests. */
+  addCollectionQuery<QE extends QueryableEntity>(request: Request): number {
     return this.#addRequest('query-collection', request, false);
   }
 
-  _addSingleQuery<QE extends QueryableEntity>(
-    request: Request
-  ): number {
+  /** @internal */
+  addSingleQuery<QE extends QueryableEntity>(request: Request): number {
     return this.#addRequest('query-single', request, false);
   }
 
-  _addCreate<QE extends QueryableEntity>(
-    request: Request
-  ): number {
+  /** @internal */
+  addCreate<QE extends QueryableEntity>(request: Request): number {
     return this.#addRequest('create', request, true);
   }
 
-  _addUpdate<QE extends QueryableEntity>(
-    request: Request
-  ): number {
+  /** @internal */
+  addUpdate<QE extends QueryableEntity>(request: Request): number {
     return this.#addRequest('update', request, true);
   }
 
-  _addDelete(
-    request: Request
-  ): number {
+  /** @internal */
+  addDelete(request: Request): number {
     return this.#addRequest('delete', request, true);
   }
 
-  _addBoundCollectionAction(request: Request): number {
+  /** @internal */
+  addBoundCollectionAction(request: Request): number {
     return this.#addRequest('action-bound-collection', request, true);
   }
 
-  _addBoundEntityAction(request: Request): number {
+  /** @internal */
+  addBoundEntityAction(request: Request): number {
     return this.#addRequest('action-bound-entity', request, true);
   }
 
-  _addBoundCollectionFunction(request: Request): number {
+  /** @internal */
+  addBoundCollectionFunction(request: Request): number {
     return this.#addRequest('function-bound-collection', request, false);
   }
 
-  _addBoundEntityFunction(request: Request): number {
+  /** @internal */
+  addBoundEntityFunction(request: Request): number {
     return this.#addRequest('function-bound-entity', request, false);
   }
 
@@ -359,24 +350,27 @@ class BatchCollectionOperation<
   QE extends QueryableEntity,
   E extends EntitySetNames<S> = EntitySetNames<S>
 > {
-  private _batch: OdataBatch<S>;
+  #batch: OdataBatch<S>;
   #schema: S;
   #entityset: QE;
   #entitysetName: E;
   #path: string;
+  #baseUrl: string;
 
   constructor(
     batch: OdataBatch<S>,
     schema: S,
     entityset: QE,
     entitysetName: E,
-    path: string
+    path: string,
+    baseUrl: string
   ) {
-    this._batch = batch;
+    this.#batch = batch;
     this.#schema = schema;
     this.#entityset = entityset;
     this.#entitysetName = entitysetName;
     this.#path = path;
+    this.#baseUrl = baseUrl;
   }
 
   query<Q extends CollectionQueryObject<QE, S>, O extends QueryOperationOptions>(
@@ -384,31 +378,29 @@ class BatchCollectionOperation<
     _o?: O
   ): number {
     const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
-    const baseUrl = this._batch._getBaseUrl();
-    const url = normalizePath(baseUrl, this.#path + queryString);
+    const url = normalizePath(this.#baseUrl, this.#path + queryString);
     const request = new Request(url, { method: 'GET' });
-    return this._batch._addCollectionQuery<QE>(request);
+    return this.#batch.addCollectionQuery<QE>(request);
   }
 
   create<O extends CreateOperationOptions<QE>>(
     c: CreateObject<QE>,
     o?: O
   ): number {
-    const baseUrl = this._batch._getBaseUrl();
     const request = buildCreateRequest(
       this.#path,
       c,
       o,
-      baseUrl,
+      this.#baseUrl,
       this.#entityset,
       this.#schema
     );
-    return this._batch._addCreate<QE>(request);
+    return this.#batch.addCreate<QE>(request);
   }
 
   key(key: string): BatchSingleOperation<S, QE, E> {
     const newPath = `${this.#path}(${key})`;
-    return new BatchSingleOperation(this._batch, this.#schema, this.#entityset, this.#entitysetName, newPath);
+    return new BatchSingleOperation(this.#batch, this.#schema, this.#entityset, this.#entitysetName, newPath, this.#baseUrl);
   }
 
   action<
@@ -425,7 +417,6 @@ class BatchCollectionOperation<
     const actionDef = actions[name as string]!;
     const parameterDefs = actionDef.parameters;
     const namespace = this.#schema.namespace || '';
-    const baseUrl = this._batch._getBaseUrl();
 
     const request = buildActionRequest(
       this.#path,
@@ -434,11 +425,11 @@ class BatchCollectionOperation<
       payload.parameters,
       parameterDefs,
       this.#schema,
-      baseUrl,
+      this.#baseUrl,
       true
     );
 
-    return this._batch._addBoundCollectionAction(request);
+    return this.#batch.addBoundCollectionAction(request);
   }
 
   function<
@@ -452,18 +443,17 @@ class BatchCollectionOperation<
     }
 
     const namespace = this.#schema.namespace || '';
-    const baseUrl = this._batch._getBaseUrl();
 
     const request = buildFunctionRequest(
       this.#path,
       namespace,
       String(name),
       payload.parameters,
-      baseUrl,
+      this.#baseUrl,
       true
     );
 
-    return this._batch._addBoundCollectionFunction(request);
+    return this.#batch.addBoundCollectionFunction(request);
   }
 }
 
@@ -472,24 +462,27 @@ class BatchSingleOperation<
   QE extends QueryableEntity,
   E extends EntitySetNames<S> = EntitySetNames<S>
 > {
-  private _batch: OdataBatch<S>;
+  #batch: OdataBatch<S>;
   #schema: S;
   #entityset: QE;
   #entitysetName: E;
   #path: string;
+  #baseUrl: string;
 
   constructor(
     batch: OdataBatch<S>,
     schema: S,
     entityset: QE,
     entitysetName: E,
-    path: string
+    path: string,
+    baseUrl: string
   ) {
-    this._batch = batch;
+    this.#batch = batch;
     this.#schema = schema;
     this.#entityset = entityset;
     this.#entitysetName = entitysetName;
     this.#path = path;
+    this.#baseUrl = baseUrl;
   }
 
   query<Q extends SingleQueryObject<QE, S>, O extends QueryOperationOptions>(
@@ -497,33 +490,30 @@ class BatchSingleOperation<
     _o?: O
   ): number {
     const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
-    const baseUrl = this._batch._getBaseUrl();
-    const url = normalizePath(baseUrl, this.#path + queryString);
+    const url = normalizePath(this.#baseUrl, this.#path + queryString);
     const request = new Request(url, { method: 'GET' });
-    return this._batch._addSingleQuery<QE>(request);
+    return this.#batch.addSingleQuery<QE>(request);
   }
 
   update<O extends UpdateOperationOptions<QE>>(
     u: UpdateObject<QE>,
     o?: O
   ): number {
-    const baseUrl = this._batch._getBaseUrl();
     const request = buildUpdateRequest(
       this.#path,
       u,
       o,
-      baseUrl,
+      this.#baseUrl,
       this.#entityset,
       this.#schema
     );
-    return this._batch._addUpdate<QE>(request);
+    return this.#batch.addUpdate<QE>(request);
   }
 
   delete(): number {
-    const baseUrl = this._batch._getBaseUrl();
-    const url = normalizePath(baseUrl, this.#path);
+    const url = normalizePath(this.#baseUrl, this.#path);
     const request = new Request(url, { method: 'DELETE' });
-    return this._batch._addDelete(request);
+    return this.#batch.addDelete(request);
   }
 
   navigate<N extends keyof QE['navigations']>(
@@ -552,17 +542,17 @@ class BatchSingleOperation<
     if (actualTargetKey && actualTargetKey in this.#schema.entitysets) {
       const targetEntity = buildQueryableEntity(this.#schema, actualTargetKey) as ResolveEntitySet<S, typeof actualTargetKey>;
       if (navigation.collection) {
-        return new BatchCollectionOperation(this._batch, this.#schema, targetEntity, actualTargetKey as any, newPath) as any;
+        return new BatchCollectionOperation(this.#batch, this.#schema, targetEntity, actualTargetKey as any, newPath, this.#baseUrl) as any;
       } else {
-        return new BatchSingleOperation(this._batch, this.#schema, targetEntity, actualTargetKey as any, newPath) as any;
+        return new BatchSingleOperation(this.#batch, this.#schema, targetEntity, actualTargetKey as any, newPath, this.#baseUrl) as any;
       }
     }
 
     const fallbackEntity = buildQueryableEntity(this.#schema, actualTargetKey || '');
     if (navigation.collection) {
-      return new BatchCollectionOperation(this._batch, this.#schema, fallbackEntity, actualTargetKey as any, newPath) as any;
+      return new BatchCollectionOperation(this.#batch, this.#schema, fallbackEntity, actualTargetKey as any, newPath, this.#baseUrl) as any;
     } else {
-      return new BatchSingleOperation(this._batch, this.#schema, fallbackEntity, actualTargetKey as any, newPath) as any;
+      return new BatchSingleOperation(this.#batch, this.#schema, fallbackEntity, actualTargetKey as any, newPath, this.#baseUrl) as any;
     }
   }
 
@@ -580,7 +570,6 @@ class BatchSingleOperation<
     const actionDef = actions[name as string]!;
     const parameterDefs = actionDef.parameters;
     const namespace = this.#schema.namespace || '';
-    const baseUrl = this._batch._getBaseUrl();
 
     const request = buildActionRequest(
       this.#path,
@@ -589,11 +578,11 @@ class BatchSingleOperation<
       payload.parameters,
       parameterDefs,
       this.#schema,
-      baseUrl,
+      this.#baseUrl,
       true
     );
 
-    return this._batch._addBoundEntityAction(request);
+    return this.#batch.addBoundEntityAction(request);
   }
 
   function<
@@ -607,18 +596,17 @@ class BatchSingleOperation<
     }
 
     const namespace = this.#schema.namespace || '';
-    const baseUrl = this._batch._getBaseUrl();
 
     const request = buildFunctionRequest(
       this.#path,
       namespace,
       String(name),
       payload.parameters,
-      baseUrl,
+      this.#baseUrl,
       true
     );
 
-    return this._batch._addBoundEntityFunction(request);
+    return this.#batch.addBoundEntityFunction(request);
   }
 }
 
