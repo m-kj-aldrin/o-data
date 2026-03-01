@@ -32,16 +32,16 @@ It has two parts:
 
 ```bash
 # with bun
-bun add o-data
+bun add @mkja/o-data
 
 # or with npm
-npm install o-data
+npm install @mkja/o-data
 
 # or with pnpm
-pnpm add o-data
+pnpm add @mkja/o-data
 
 # or with yarn
-yarn add o-data
+yarn add @mkja/o-data
 ```
 
 The runtime expects a `fetch`‑compatible environment (`Request`, `Response`, `Headers`); it works in modern Node (with `fetch`) and browsers.
@@ -56,7 +56,7 @@ You can either write a schema by hand:
 
 ```ts
 // schema.ts
-import { schema } from "o-data/schema";
+import { schema } from "@mkja/o-data/schema";
 
 export const crmSchema = schema({
   namespace: "Microsoft.Dynamics.CRM",
@@ -92,7 +92,7 @@ export const crmSchema = schema({
 
 ```ts
 // client.ts
-import { OdataClient } from "o-data";
+import { OdataClient } from "@mkja/o-data";
 import { crmSchema } from "./schema"; // or generated-o-data-schema
 
 const client = new OdataClient(crmSchema, {
