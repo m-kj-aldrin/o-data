@@ -1161,7 +1161,7 @@ export async function generateSchema(configPath?: string): Promise<void> {
   }
 
   // Generate schema output
-  let out = `import { schema } from "o-data/schema";\n\n`;
+  let out = `import { schema } from "@mkja/o-data/schema";\n\n`;
   out += `export const ${namespace.replace(/\./g, '_').toLowerCase()}_schema = schema({\n`;
   out += `  namespace: "${namespace}",\n`;
   if (alias) {
