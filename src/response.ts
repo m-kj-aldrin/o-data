@@ -80,31 +80,30 @@ type ExtractQueryResultShape<
   S extends Schema<S> = Schema<any>
 > = Pick<E['properties'], ExtractSelectKeys<E, Q>> & ExtractExpandShape<E, Q, S>;
 
-// Collection query result data
+// Collection query result data.
+// Sch is passed explicitly (infer S from Q fails when expand is present, same as SingleQueryData).
 export type CollectionQueryData<
   E extends QueryableEntity = any,
   Q extends CollectionQueryObject<E, any> = any,
-  O = any
-> = Q extends CollectionQueryObject<E, infer S>
-  ? {
-      value: ExtractQueryResultShape<E, Q, S>[];
-    } & ODataMetadata
-  : {
-      value: any[];
-    } & ODataMetadata;
+  O = any,
+  Sch extends Schema<Sch> = Schema<any>
+> = {
+  value: ExtractQueryResultShape<E, Q, Sch>[];
+} & ODataMetadata;
 
 export type CollectionQueryError = ODataError;
 
 export type CollectionQueryResponse<
   E extends QueryableEntity = any,
   Q extends CollectionQueryObject<E, any> = any,
-  O = any
+  O = any,
+  Sch extends Schema<Sch> = Schema<any>
 > = ODataResponse<
-  CollectionQueryData<E, Q, O>,
+  CollectionQueryData<E, Q, O, Sch>,
   CollectionQueryError
 > & {
   // Pagination support - added conditionally based on options
-  next?: () => Promise<CollectionQueryResponse<E, Q, O>>;
+  next?: () => Promise<CollectionQueryResponse<E, Q, O, Sch>>;
 };
 
 // Single query result data

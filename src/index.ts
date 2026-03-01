@@ -256,7 +256,7 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E ext
   async query<Q extends CollectionQueryObject<QE, S>, O extends QueryOperationOptions>(
     q: Q,
     o?: O
-  ): Promise<CollectionQueryResponse<QE, Q, O>> {
+  ): Promise<CollectionQueryResponse<QE, Q, O, S>> {
     const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
     const url = this.buildUrl(queryString);
     const request = new Request(url);
@@ -269,7 +269,7 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E ext
       statusText: response.statusText,
       headers: response.headers,
       result: data,
-    } as CollectionQueryResponse<QE, Q, O>;
+    } as CollectionQueryResponse<QE, Q, O, S>;
   }
 
   /**
