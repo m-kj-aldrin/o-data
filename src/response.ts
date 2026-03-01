@@ -56,8 +56,8 @@ type ExtractSelectKeys<
   ? Q['select'][number]
   : keyof E['properties']; // If no select, return all property keys
 
-// Extract expand result shape recursively
-// Use target directly (like old implementation) - it's now resolved at type level
+// Extract expand result shape recursively.
+// Pass S explicitly to query types so nested expand resolution works (ResolveNavigationTarget needs S).
 type ExtractExpandShape<
   E extends QueryableEntity,
   Q extends { expand?: Record<string, any> },
@@ -65,7 +65,7 @@ type ExtractExpandShape<
 > = Q['expand'] extends Record<string, any>
   ? {
       [K in keyof Q['expand'] & keyof E['navigations']]: 
-        Q['expand'][K] extends SingleExpandObject<E['navigations'][K]['target']> | SingleQueryObject<E['navigations'][K]['target']> | CollectionQueryObject<E['navigations'][K]['target']>
+        Q['expand'][K] extends SingleExpandObject<E['navigations'][K]['target'], S> | SingleQueryObject<E['navigations'][K]['target'], S> | CollectionQueryObject<E['navigations'][K]['target'], S>
           ? E['navigations'][K]['collection'] extends true
             ? Array<ExtractQueryResultShape<E['navigations'][K]['target'], Q['expand'][K], S>>
             : ExtractQueryResultShape<E['navigations'][K]['target'], Q['expand'][K], S>
