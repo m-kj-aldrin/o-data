@@ -84,3 +84,64 @@ test('$batch - delete in changeset', async () => {
   expect(body).toContain('Content-ID: 1');
 });
 
+test('$batch - execute returns parsed results', async () => {
+  const boundary = 'batchresponse_test123';
+  const multipartBody = [
+    `--${boundary}`,
+    'Content-Type: application/http',
+    'Content-Transfer-Encoding: binary',
+    '',
+    'HTTP/1.1 200 OK',
+    'Content-Type: application/json; odata.metadata=minimal',
+    'OData-Version: 4.0',
+    '',
+    '{"@odata.context":"https://demo.com/$metadata#incidents","value":[{"incidentid":"a","title":"First"}]}',
+    `--${boundary}`,
+    'Content-Type: application/http',
+    'Content-Transfer-Encoding: binary',
+    '',
+    'HTTP/1.1 200 OK',
+    'Content-Type: application/json; odata.metadata=minimal',
+    'OData-Version: 4.0',
+    '',
+    '{"@odata.context":"https://demo.com/$metadata#activitymimeattachments","@odata.count":2,"value":[]}',
+    `--${boundary}--`,
+  ].join('\r\n');
+
+  const batchClient = new OdataClient(coop_crm_schema, {
+    baseUrl: 'https://demo.com/api/data/v9.0/',
+    transport: async () =>
+      new Response(multipartBody, {
+        status: 200,
+        headers: {
+          'Content-Type': `multipart/mixed; boundary=${boundary}`,
+        },
+      }),
+  });
+
+  const batch = batchClient.batch();
+  batch.entitysets('incidents').query({ select: ['title'] });
+  batch.entitysets('incidents').query({ select: ['incidentid'], top: 1 });
+
+  const result = await batch.execute();
+
+  expect(result.ok).toBe(true);
+  expect(result.status).toBe(200);
+  expect(result.results).toHaveLength(2);
+
+  expect(result.results[0]!.ok).toBe(true);
+  expect(result.results[0]!.status).toBe(200);
+  expect(result.results[0]!.result).toEqual({
+    '@odata.context': 'https://demo.com/$metadata#incidents',
+    value: [{ incidentid: 'a', title: 'First' }],
+  });
+
+  expect(result.results[1]!.ok).toBe(true);
+  expect(result.results[1]!.status).toBe(200);
+  expect(result.results[1]!.result).toEqual({
+    '@odata.context': 'https://demo.com/$metadata#activitymimeattachments',
+    '@odata.count': 2,
+    value: [],
+  });
+});
+

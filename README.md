@@ -272,10 +272,10 @@ batch.entitysets("incidents").create({ title: "New" });
 batch.entitysets("incidents").key("guid-123").update({ title: "Updated" });
 batch.entitysets("incidents").key("guid-456").delete();
 
-const response = await batch.execute();
+const result = await batch.execute();
 ```
 
-`batch.execute()` returns the raw multipart `Response`; parsing individual operation responses is the application's responsibility. Use `batch.buildRequest()` to obtain the `Request` without sending it.
+`batch.execute()` returns a parsed `BatchExecuteResult` with `ok`, `status`, `statusText`, `headers`, and `results` (one `BatchItemResult` per queued operation, in order). Each item has `ok`, `status`, `statusText`, `headers`, and `result` (parsed JSON body). Use `batch.buildRequest()` to obtain the `Request` without sending it.
 
 You can also use `.navigate(...)`, bound and unbound actions, and functions within a batch with the same API as the client.
 

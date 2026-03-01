@@ -84,6 +84,121 @@ type BatchRequest = {
 };
 
 // ============================================================================
+// Batch Response Types
+// ============================================================================
+
+export type BatchItemResult = {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers: Headers;
+  result: unknown;
+};
+
+export type BatchExecuteResult = {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers: Headers;
+  results: BatchItemResult[];
+};
+
+function parseBatchResponse(text: string, contentType: string): BatchItemResult[] {
+  const boundaryMatch = contentType.match(/boundary=([^;\s"']+)/);
+  const boundary = boundaryMatch?.[1]?.trim();
+  if (!boundary) {
+    return [];
+  }
+
+  const delimiter = `--${boundary}`;
+  const closingDelimiter = `--${boundary}--`;
+  const parts: BatchItemResult[] = [];
+
+  // Split by delimiter; first segment is typically empty or preamble
+  const segments = text.split(new RegExp(`\\r?\\n?${escapeRegex(delimiter)}(--)?\\r?\\n?`));
+
+  for (let i = 1; i < segments.length; i++) {
+    const segment = segments[i];
+    if (!segment || segment.startsWith('--')) continue; // empty or closing delimiter
+    const part = parseBatchPart(segment);
+    if (part) parts.push(part);
+  }
+
+  return parts;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function parseBatchPart(segment: string): BatchItemResult | null {
+  const lines = segment.split(/\r?\n/);
+  let idx = 0;
+
+  // Skip part headers (Content-Type: application/http, etc.) until blank line
+  while (idx < lines.length && lines[idx]!.trim() !== '') {
+    idx++;
+  }
+  idx++; // skip blank line
+
+  if (idx >= lines.length) return null;
+
+  // Parse HTTP status line: "HTTP/1.1 200 OK"
+  const statusLine = lines[idx]!;
+  const statusMatch = statusLine.match(/HTTP\/[\d.]+\s+(\d+)\s*(.*)/);
+  const status = statusMatch ? parseInt(statusMatch[1]!, 10) : 0;
+  const statusText = statusMatch?.[2]?.trim() ?? '';
+
+  idx++;
+
+  // Parse headers until blank line
+  const headerLines: string[] = [];
+  while (idx < lines.length && lines[idx]!.trim() !== '') {
+    headerLines.push(lines[idx]!);
+    idx++;
+  }
+  idx++; // skip blank line
+
+  const headers = new Headers();
+  let contentType = '';
+  for (const line of headerLines) {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx > 0) {
+      const name = line.slice(0, colonIdx).trim().toLowerCase();
+      const value = line.slice(colonIdx + 1).trim();
+      headers.append(line.slice(0, colonIdx).trim(), value);
+      if (name === 'content-type') contentType = value;
+    }
+  }
+
+  // Body is the rest (trim trailing CRLF from next boundary)
+  const body = lines.slice(idx).join('\n').replace(/\r?\n?$/, '').trim();
+
+  let result: unknown;
+  if (body) {
+    if (contentType.includes('application/json')) {
+      try {
+        result = JSON.parse(body);
+      } catch {
+        result = body;
+      }
+    } else {
+      result = body;
+    }
+  } else {
+    result = status >= 200 && status < 300 ? {} : undefined;
+  }
+
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText,
+    headers,
+    result,
+  };
+}
+
+// ============================================================================
 // Batch Builder
 // ============================================================================
 
@@ -329,10 +444,33 @@ export class OdataBatch<S extends Schema<S>> {
 
   /**
    * Build the batch request and send it via the configured transport.
+   * Returns a parsed batch result with per-operation results.
    */
-  async execute(): Promise<Response> {
+  async execute(): Promise<BatchExecuteResult> {
     const request = await this.buildRequest();
-    return this.#options.transport(request);
+    const response = await this.#options.transport(request);
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        results: [],
+      };
+    }
+
+    const text = await response.text();
+    const contentType = response.headers.get('Content-Type') ?? '';
+    const results = parseBatchResponse(text, contentType);
+
+    return {
+      ok: true,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      results,
+    };
   }
 }
 

@@ -16,10 +16,10 @@ import type {
 } from './types';
 import { buildQueryableEntity } from './runtime.js';
 import { OdataBatch } from './batch.js';
-import type { OdataBatchPublic } from './batch.js';
+import type { OdataBatchPublic, BatchExecuteResult, BatchItemResult } from './batch.js';
 
 export { OdataBatch };
-export type { OdataBatchPublic };
+export type { OdataBatchPublic, BatchExecuteResult, BatchItemResult };
 import type {
   CollectionQueryResponse,
   SingleQueryResponse,
