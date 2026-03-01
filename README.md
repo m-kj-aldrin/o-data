@@ -298,7 +298,7 @@ const res = await client
   });
 
 if (res.ok) {
-  const ok: boolean = res.result.value; // mapped from Edm.Boolean (flat at top level)
+  const ok: boolean = res.result; // mapped from Edm.Boolean (flat at top level)
 }
 ```
 
@@ -325,7 +325,7 @@ const res = await client
   });
 
 if (res.ok) {
-  const count: number = res.result.value; // flat at top level
+  const count: number = res.result; // flat at top level
 }
 ```
 
@@ -422,7 +422,6 @@ const client = new OdataClient(myservice_schema, {
 ## Status and limitations
 
 - The library is still **early (0.0.x)**; APIs may change.
-- Some operations are marked `TODO` in the runtime (e.g. delete support outside batch, collection‑bound actions/functions implementation, richer pagination).
 - The generator doesn’t yet handle OData operation overloading beyond keeping the first operation per name.
 
 ---
