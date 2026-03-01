@@ -206,12 +206,7 @@ export class OdataClient<S extends Schema<S>> {
       } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
     }
 
-    let result: unknown;
-    try {
-      result = await response.json();
-    } catch {
-      result = {};
-    }
+    const result = response.status === 204 ? {} : await response.json();
     return {
       ok: true,
       status: response.status,
@@ -266,7 +261,7 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E ext
     const url = this.buildUrl(queryString);
     const request = new Request(url);
     const response = await this.#options.transport(request);
-    const data = await response.json();
+    const data = response.status === 204 || response.status === 304 ? {} : await response.json();
     
     return {
       ok: response.ok,
@@ -303,7 +298,7 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E ext
       this.#schema
     );
     const response = await this.#options.transport(request);
-    const data = await response.json();
+    const data = response.status === 204 ? {} : await response.json();
     
     return {
       ok: response.ok,
@@ -379,7 +374,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
     const url = this.buildUrl(queryString);
     const request = new Request(url);
     const response = await this.#options.transport(request);
-    const data = await response.json();
+    const data = response.status === 204 || response.status === 304 ? {} : await response.json();
     
     return {
       ok: response.ok,
@@ -416,7 +411,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       this.#schema
     );
     const response = await this.#options.transport(request);
-    const data = await response.json();
+    const data = response.status === 204 ? {} : await response.json();
     
     return {
       ok: response.ok,
@@ -580,12 +575,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
     }
 
-    let result: unknown;
-    try {
-      result = await response.json();
-    } catch {
-      result = {};
-    }
+    const result = response.status === 204 ? {} : await response.json();
     return {
       ok: true,
       status: response.status,
