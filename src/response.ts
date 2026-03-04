@@ -93,6 +93,7 @@ export type CollectionQueryData<
 
 export type CollectionQueryError = ODataError;
 
+// Response has .next only when the initial request included prefer.maxpagesize (paged request).
 export type CollectionQueryResponse<
   E extends QueryableEntity = any,
   Q extends CollectionQueryObject<E, any> = any,
@@ -101,10 +102,14 @@ export type CollectionQueryResponse<
 > = ODataResponse<
   CollectionQueryData<E, Q, O, Sch>,
   CollectionQueryError
-> & {
-  // Pagination support - added when result has @odata.nextLink. Options can be passed to each next() call (e.g. prefer.maxpagesize).
-  next?: (options?: QueryOperationOptions) => Promise<CollectionQueryResponse<E, Q, O, Sch>>;
-};
+> & (O extends { prefer: { maxpagesize: number } }
+    ? {
+        // Paged response: next() is present; options can be passed for subsequent pages (e.g. prefer.maxpagesize).
+        next: (options?: QueryOperationOptions) => Promise<CollectionQueryResponse<E, Q, O, Sch>>;
+      }
+    : {
+        // Non-paged response: next is not part of the type.
+      });
 
 // Single query result data
 // S is passed from the client so we don't rely on infer S from Q (which fails when expand is present).

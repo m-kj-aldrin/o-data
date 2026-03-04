@@ -251,7 +251,7 @@ function buildCollectionQueryResponse<
     result: data,
   } as CollectionQueryResponse<QE, Q, O, S>;
   if (out.ok && data?.['@odata.nextLink']) {
-    out.next = async (nextOpts?: QueryOperationOptions) => {
+    const nextFn = async (nextOpts?: QueryOperationOptions) => {
       const opts = nextOpts ?? o;
       const hasHeaders = opts?.prefer?.maxpagesize != null || (opts?.headers && Object.keys(opts.headers).length > 0);
       const headers = hasHeaders ? new Headers() : undefined;
@@ -270,6 +270,7 @@ function buildCollectionQueryResponse<
       const nextData = nextRes.status === 204 || nextRes.status === 304 ? {} : await nextRes.json();
       return buildCollectionQueryResponse<QE, Q, O, S>(nextRes, nextData, transport, opts as O);
     };
+    (out as { next: (options?: QueryOperationOptions) => Promise<CollectionQueryResponse<QE, Q, O, S>> }).next = nextFn;
   }
   return out;
 }
