@@ -36,7 +36,7 @@ export type ODataError = { error: any };
 
 import type { QueryableEntity, EntitySetToQueryableEntity, ODataTypeToTS } from './types';
 import type { Schema, ODataType } from './schema';
-import type { CollectionQueryObject, SingleQueryObject, SingleExpandObject } from './query';
+import type { CollectionQueryObject, SingleQueryObject, SingleExpandObject, QueryOperationOptions } from './query';
 
 // Helper to resolve navigation target QueryableEntity from targetEntitysetKey (same as in query.ts)
 type ResolveNavigationTarget<
@@ -102,8 +102,8 @@ export type CollectionQueryResponse<
   CollectionQueryData<E, Q, O, Sch>,
   CollectionQueryError
 > & {
-  // Pagination support - added conditionally based on options
-  next?: () => Promise<CollectionQueryResponse<E, Q, O, Sch>>;
+  // Pagination support - added when result has @odata.nextLink. Options can be passed to each next() call (e.g. prefer.maxpagesize).
+  next?: (options?: QueryOperationOptions) => Promise<CollectionQueryResponse<E, Q, O, Sch>>;
 };
 
 // Single query result data

@@ -231,6 +231,49 @@ export class OdataClient<S extends Schema<S>> {
   }
 }
 
+// Build collection query response and attach next() when result has @odata.nextLink. Options can be passed to next() (e.g. prefer.maxpagesize) for subsequent requests.
+function buildCollectionQueryResponse<
+  QE extends QueryableEntity,
+  Q extends CollectionQueryObject<QE, any>,
+  O extends QueryOperationOptions | undefined,
+  S extends Schema<S>
+>(
+  res: Response,
+  data: any,
+  transport: Fetch,
+  o?: O
+): CollectionQueryResponse<QE, Q, O, S> {
+  const out: CollectionQueryResponse<QE, Q, O, S> = {
+    ok: res.ok,
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+    result: data,
+  } as CollectionQueryResponse<QE, Q, O, S>;
+  if (out.ok && data?.['@odata.nextLink']) {
+    out.next = async (nextOpts?: QueryOperationOptions) => {
+      const opts = nextOpts ?? o;
+      const hasHeaders = opts?.prefer?.maxpagesize != null || (opts?.headers && Object.keys(opts.headers).length > 0);
+      const headers = hasHeaders ? new Headers() : undefined;
+      if (headers) {
+        if (opts?.prefer?.maxpagesize != null) {
+          headers.set('Prefer', `odata.maxpagesize=${opts.prefer.maxpagesize}`);
+        }
+        if (opts?.headers) {
+          for (const [key, value] of Object.entries(opts.headers)) {
+            headers.set(key, value);
+          }
+        }
+      }
+      const nextRequest = new Request(data['@odata.nextLink'], headers ? { headers } : undefined);
+      const nextRes = await transport(nextRequest);
+      const nextData = nextRes.status === 204 || nextRes.status === 304 ? {} : await nextRes.json();
+      return buildCollectionQueryResponse<QE, Q, O, S>(nextRes, nextData, transport, opts as O);
+    };
+  }
+  return out;
+}
+
 // ============================================================================
 // CollectionOperation
 // ============================================================================
@@ -259,17 +302,22 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E ext
   ): Promise<CollectionQueryResponse<QE, Q, O, S>> {
     const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
     const url = this.buildUrl(queryString);
-    const request = new Request(url);
+    const hasHeaders = o?.prefer?.maxpagesize != null || (o?.headers && Object.keys(o.headers).length > 0);
+    const headers = hasHeaders ? new Headers() : undefined;
+    if (headers) {
+      if (o?.prefer?.maxpagesize != null) {
+        headers.set('Prefer', `odata.maxpagesize=${o.prefer.maxpagesize}`);
+      }
+      if (o?.headers) {
+        for (const [key, value] of Object.entries(o.headers)) {
+          headers.set(key, value);
+        }
+      }
+    }
+    const request = new Request(url, headers ? { headers } : undefined);
     const response = await this.#options.transport(request);
     const data = response.status === 204 || response.status === 304 ? {} : await response.json();
-    
-    return {
-      ok: response.ok,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result: data,
-    } as CollectionQueryResponse<QE, Q, O, S>;
+    return buildCollectionQueryResponse<QE, Q, O, S>(response, data, this.#options.transport, o);
   }
 
   /**
