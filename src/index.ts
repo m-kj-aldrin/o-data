@@ -22,7 +22,11 @@ export { OdataBatch };
 export type { OdataBatchPublic, BatchExecuteResult, BatchItemResult };
 import type {
   CollectionQueryResponse,
+  CollectionQueryResponseByResult,
   SingleQueryResponse,
+  SingleQueryResponseByResult,
+  ExtractQueryResultShape,
+  Simplify,
   CreateResponse,
   UpdateResponse,
   DeleteResponse,
@@ -300,7 +304,7 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E ext
   async query<Q extends CollectionQueryObject<QE, S>, O extends QueryOperationOptions>(
     q: Q,
     o?: O
-  ): Promise<CollectionQueryResponse<QE, Q, O, S>> {
+  ): Promise<CollectionQueryResponseByResult<Simplify<ExtractQueryResultShape<QE, Q, S>>, O>> {
     const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
     const url = this.buildUrl(queryString);
     const hasHeaders = o?.prefer?.maxpagesize != null || (o?.headers && Object.keys(o.headers).length > 0);
@@ -318,7 +322,7 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E ext
     const request = new Request(url, headers ? { headers } : undefined);
     const response = await this.#options.transport(request);
     const data = response.status === 204 || response.status === 304 ? {} : await response.json();
-    return buildCollectionQueryResponse<QE, Q, O, S>(response, data, this.#options.transport, o);
+    return buildCollectionQueryResponse<QE, Q, O, S>(response, data, this.#options.transport, o) as CollectionQueryResponseByResult<Simplify<ExtractQueryResultShape<QE, Q, S>>, O>;
   }
 
   /**
@@ -418,7 +422,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
   async query<Q extends SingleQueryObject<QE, S>, O extends QueryOperationOptions>(
     q: Q,
     o?: O
-  ): Promise<SingleQueryResponse<QE, Q, O, S>> {
+  ): Promise<SingleQueryResponseByResult<Simplify<ExtractQueryResultShape<QE, Q, S>>>> {
     const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
     const url = this.buildUrl(queryString);
     const request = new Request(url);
@@ -431,7 +435,7 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       statusText: response.statusText,
       headers: response.headers,
       result: data,
-    } as SingleQueryResponse<QE, Q, O, S>;
+    } as SingleQueryResponseByResult<Simplify<ExtractQueryResultShape<QE, Q, S>>>;
   }
 
   /**

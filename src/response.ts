@@ -30,6 +30,13 @@ export type ODataResponse<TSuccess, TError = { error: any }> =
 // Error types
 export type ODataError = { error: any };
 
+// Force a type to resolve to a plain object so tooling shows { subject: string; ... } instead of Pick<MapPropertiesToTS<...>, ...>. Recursive for expand shapes.
+export type Simplify<T> = T extends readonly (infer U)[]
+  ? Simplify<U>[]
+  : T extends object
+  ? { -readonly [K in keyof T]: Simplify<T[K]> }
+  : T;
+
 // ============================================================================
 // Query Response Types
 // ============================================================================
@@ -73,8 +80,8 @@ type ExtractExpandShape<
     }
   : {};
 
-// Extract the result shape from a query object
-type ExtractQueryResultShape<
+// Extract the result shape from a query object (exported so method return types can use it without pulling in full schema).
+export type ExtractQueryResultShape<
   E extends QueryableEntity,
   Q extends { select?: readonly (keyof E['properties'])[]; expand?: Record<string, any> },
   S extends Schema<S> = Schema<any>
@@ -130,6 +137,25 @@ export type SingleQueryResponse<
   SingleQueryData<E, Q, Sch>,
   SingleQueryError
 >;
+
+// Optimized single-query return type: parameterized only by the result shape so method signatures stay small.
+export type SingleQueryResponseByResult<TResult = any> = ODataResponse<
+  TResult & ODataMetadata,
+  SingleQueryError
+>;
+
+// Optimized collection-query return type: parameterized by result item shape and options (for next() typing).
+export type CollectionQueryResponseByResult<
+  TResult = any,
+  O = any
+> = ODataResponse<
+  { value: TResult[] } & ODataMetadata,
+  CollectionQueryError
+> & (O extends { prefer: { maxpagesize: number } }
+  ? {
+      next: (options?: QueryOperationOptions) => Promise<CollectionQueryResponseByResult<TResult, O>>;
+    }
+  : {});
 
 // ============================================================================
 // Create Response Types
