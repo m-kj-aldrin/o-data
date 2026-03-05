@@ -475,8 +475,35 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
    * Delete an entity.
    */
   async delete(): Promise<DeleteResponse> {
-    // TODO: Implement delete execution
-    throw new Error('Not implemented');
+    const url = this.buildUrl();
+    const request = new Request(url, { method: 'DELETE' });
+    const response = await this.#options.transport(request);
+
+    if (!response.ok) {
+      let error: any;
+      try {
+        error = await response.json();
+      } catch {
+        error = await response.text();
+      }
+      return {
+        ok: false,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        result: { error },
+      } as DeleteResponse;
+    }
+
+    const data = response.status === 204 || response.status === 304 ? {} : await response.json();
+
+    return {
+      ok: true,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      result: data,
+    } as DeleteResponse;
   }
 
   /**
