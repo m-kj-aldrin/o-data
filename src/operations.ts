@@ -99,6 +99,15 @@ type CollectionNavUpdateSpec = {
   remove?: (string | number | [string, string | number])[];
 };
 
+// Pure replace: array of partial entity objects (each item serialized like create/deep insert)
+type PureReplaceCollectionNav<N extends { target: any }> = Partial<_CreateObject<NavTargetEntity<N>>>[];
+
+// Collection navigation update value: spec (refs) or pure replace (array of objects)
+type CollectionNavUpdateValue<N extends { target: any; collection: boolean; targetEntitysetKey: string | string[] }> =
+  N['collection'] extends true
+    ? CollectionNavUpdateSpec | PureReplaceCollectionNav<N>
+    : never;
+
 // Single-valued navigation updates
 type SingleNavUpdates<QE extends QueryableEntity> = {
   [K in keyof QE['navigations'] as QE['navigations'][K]['collection'] extends true 
@@ -110,7 +119,7 @@ type SingleNavUpdates<QE extends QueryableEntity> = {
 type CollectionNavUpdates<QE extends QueryableEntity> = {
   [K in keyof QE['navigations'] as QE['navigations'][K]['collection'] extends true 
     ? K 
-    : never]?: CollectionNavUpdateSpec;
+    : never]?: CollectionNavUpdateValue<QE['navigations'][K]>;
 };
 
 // ============================================================================

@@ -334,6 +334,26 @@ export function transformUpdateObjectForBind<S extends Schema<S>>(
           ? navDef.targetEntitysetKey[0]
           : navDef.targetEntitysetKey;
         transformed[`${key}@odata.bind`] = `/${target}(${value})`;
+      } else if (
+        navDef.collection &&
+        Array.isArray(value) &&
+        (value.length === 0 ||
+          (typeof value[0] === 'object' && value[0] !== null && !Array.isArray(value[0])))
+      ) {
+        // Collection navigation pure replace: array of entity objects (each item serialized like create)
+        const targetEntitysetKey = Array.isArray(navDef.targetEntitysetKey)
+          ? navDef.targetEntitysetKey[0]
+          : navDef.targetEntitysetKey;
+        if (targetEntitysetKey != null) {
+          const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+          transformed[key] = (value as any[]).map((item: any) =>
+            typeof item === 'object' && item !== null
+              ? transformCreateObjectForBind(item, targetEntity, schema)
+              : item
+          );
+        } else {
+          transformed[key] = value;
+        }
       } else if (typeof value === 'object' && value !== null) {
         // Check if it's a collection operation spec
         const spec = value as { replace?: any[]; add?: any[]; remove?: any[] };

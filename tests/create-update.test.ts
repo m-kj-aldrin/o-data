@@ -486,6 +486,66 @@ test('update - collection navigation operations with batch references', async ()
   expect(body.contact_incidents.add).toEqual(['$1', '$2']);
 });
 
+test('update - collection navigation pure replace (array of objects)', async () => {
+  await client
+    .entitysets('contacts')
+    .key('guid-123')
+    .update({
+      contact_incidents: [{ title: 'Incident A' }, { title: 'Incident B' }],
+    });
+
+  expect(capturedRequests.length).toBe(1);
+  const req = capturedRequests[0]!;
+  const body = await getRequestBody(req);
+
+  expect(body.contact_incidents).toBeDefined();
+  expect(Array.isArray(body.contact_incidents)).toBe(true);
+  expect(body.contact_incidents.length).toBe(2);
+  expect(body.contact_incidents[0].title).toBe('Incident A');
+  expect(body.contact_incidents[1].title).toBe('Incident B');
+});
+
+test('update - collection navigation pure replace with nested nav bind', async () => {
+  await client
+    .entitysets('contacts')
+    .key('guid-123')
+    .update({
+      contact_incidents: [
+        { title: 'Incident A', incident_contact: 'guid-456' },
+        { title: 'Incident B', description: 'Plain property' },
+      ],
+    });
+
+  expect(capturedRequests.length).toBe(1);
+  const req = capturedRequests[0]!;
+  const body = await getRequestBody(req);
+
+  expect(body.contact_incidents).toBeDefined();
+  expect(Array.isArray(body.contact_incidents)).toBe(true);
+  expect(body.contact_incidents.length).toBe(2);
+  expect(body.contact_incidents[0].title).toBe('Incident A');
+  expect(body.contact_incidents[0]['incident_contact@odata.bind']).toBe('/contacts(guid-456)');
+  expect(body.contact_incidents[1].title).toBe('Incident B');
+  expect(body.contact_incidents[1].description).toBe('Plain property');
+});
+
+test('update - collection navigation pure replace (empty array)', async () => {
+  await client
+    .entitysets('contacts')
+    .key('guid-123')
+    .update({
+      contact_incidents: [],
+    });
+
+  expect(capturedRequests.length).toBe(1);
+  const req = capturedRequests[0]!;
+  const body = await getRequestBody(req);
+
+  expect(body.contact_incidents).toBeDefined();
+  expect(Array.isArray(body.contact_incidents)).toBe(true);
+  expect(body.contact_incidents.length).toBe(0);
+});
+
 test('update - with options (select)', async () => {
   await client
     .entitysets('incidents')
