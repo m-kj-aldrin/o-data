@@ -1,0 +1,14 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "types": ["bun"],
+    "paths": {
+      "@mkja/o-data": ["../src/index.ts"],
+      "@mkja/o-data/schema": ["../src/schema.ts"],
+      "@mkja/o-data/parser": ["../src/parser/config.ts"]
+    }
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["node_modules"]
+}
