@@ -200,9 +200,98 @@ export function buildQueryString<S extends Schema<S>>(
   return params.length > 0 ? `?${params.join('&')}` : '';
 }
 
-// ============================================================================
-// Create/Update Object Transformation
-// ============================================================================
+function isBatchRef(value: unknown): value is string {
+  return typeof value === 'string' && value.startsWith('$');
+}
+
+function firstEntitySetKey(key: string | string[] | undefined): string | undefined {
+  return Array.isArray(key) ? key[0] : key;
+}
+
+function bindPath(entityset: string | undefined, id: string | number): string {
+  return `/${entityset}(${id})`;
+}
+
+function isExplicitSetId(value: unknown): value is [string, string | number] {
+  return (
+    Array.isArray(value) &&
+    value.length === 2 &&
+    typeof value[0] === 'string' &&
+    (typeof value[1] === 'string' || typeof value[1] === 'number')
+  );
+}
+
+function formatRef(
+  value: string | number | [string, string | number],
+  targetEntitysetKey: string | undefined
+): string {
+  if (isBatchRef(value)) return value;
+  if (Array.isArray(value)) return bindPath(value[0], value[1]);
+  return bindPath(targetEntitysetKey, value);
+}
+
+function transformDeepInsert<S extends Schema<S>>(
+  value: any,
+  targetEntitysetKey: string | undefined,
+  schema: S
+): any {
+  if (targetEntitysetKey == null) return value;
+  return transformCreateObjectForBind(value, buildQueryableEntity(schema, targetEntitysetKey), schema);
+}
+
+function transformDeepInsertArray<S extends Schema<S>>(
+  value: any[],
+  targetEntitysetKey: string | undefined,
+  schema: S
+): any {
+  if (targetEntitysetKey == null) return value;
+  const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
+  return value.map((item: any) =>
+    typeof item === 'object' && item !== null
+      ? transformCreateObjectForBind(item, targetEntity, schema)
+      : item
+  );
+}
+
+function assignNavBind<S extends Schema<S>>(
+  transformed: any,
+  key: string,
+  value: any,
+  isCollection: boolean,
+  targetEntitysetKey: string | undefined,
+  schema: S
+): void {
+  if (!isCollection) {
+    if (isBatchRef(value)) {
+      transformed[`${key}@odata.bind`] = value;
+    } else if (isExplicitSetId(value)) {
+      transformed[`${key}@odata.bind`] = bindPath(value[0], value[1]);
+    } else if (typeof value === 'string' || typeof value === 'number') {
+      transformed[`${key}@odata.bind`] = bindPath(targetEntitysetKey, value);
+    } else if (typeof value === 'object' && value !== null) {
+      transformed[key] = transformDeepInsert(value, targetEntitysetKey, schema);
+    } else {
+      transformed[key] = value;
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length > 0 && (typeof value[0] === 'string' || typeof value[0] === 'number')) {
+      transformed[`${key}@odata.bind`] = (value as (string | number)[]).map((v) =>
+        isBatchRef(v) ? v : bindPath(targetEntitysetKey, v)
+      );
+    } else if (value.length > 0 && Array.isArray(value[0])) {
+      transformed[`${key}@odata.bind`] = (value as [string, string | number][]).map(([set, id]) =>
+        bindPath(set, id)
+      );
+    } else {
+      transformed[key] = transformDeepInsertArray(value, targetEntitysetKey, schema);
+    }
+  } else {
+    transformed[key] = value;
+  }
+}
 
 /**
  * Transform create object to handle navigation properties with @odata.bind format
@@ -214,90 +303,28 @@ export function transformCreateObjectForBind<S extends Schema<S>>(
 ): any {
   if (!entityDef || !entityDef.navigations) return createObject;
   const transformed: any = {};
-  
+
   for (const [key, value] of Object.entries(createObject)) {
-    // Check for batch reference first
-    if (typeof value === 'string' && value.startsWith('$')) {
+    if (isBatchRef(value)) {
       transformed[`${key}@odata.bind`] = value;
       continue;
     }
 
     const navDef = entityDef.navigations[key as keyof typeof entityDef.navigations];
     if (navDef && navDef.targetEntitysetKey) {
-      const isCollection = navDef.collection === true;
-      
-      if (!isCollection) {
-        // Single-valued navigation
-        if (
-          Array.isArray(value) &&
-          value.length === 2 &&
-          typeof value[0] === 'string' &&
-          (typeof value[1] === 'string' || typeof value[1] === 'number')
-        ) {
-          // Explicit entityset format: [entityset, id]
-          const [set, id] = value as [string, string | number];
-          transformed[`${key}@odata.bind`] = `/${set}(${id})`;
-        } else if (typeof value === 'string' || typeof value === 'number') {
-          // Plain ID - resolve entityset from navigation
-          const target = Array.isArray(navDef.targetEntitysetKey)
-            ? navDef.targetEntitysetKey[0]
-            : navDef.targetEntitysetKey;
-          transformed[`${key}@odata.bind`] = `/${target}(${value})`;
-        } else if (typeof value === 'object' && value !== null) {
-          // Deep insert - recursive transformation
-          const targetEntitysetKey = Array.isArray(navDef.targetEntitysetKey)
-            ? navDef.targetEntitysetKey[0]
-            : navDef.targetEntitysetKey;
-          if (targetEntitysetKey != null) {
-            const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-            transformed[key] = transformCreateObjectForBind(value, targetEntity, schema);
-          } else {
-            transformed[key] = value;
-          }
-        } else {
-          transformed[key] = value;
-        }
-      } else {
-        // Collection navigation
-        if (Array.isArray(value)) {
-          if (value.length > 0 && (typeof value[0] === 'string' || typeof value[0] === 'number')) {
-            // Array of string/number IDs (or batch references)
-            const target = Array.isArray(navDef.targetEntitysetKey)
-              ? navDef.targetEntitysetKey[0]
-              : navDef.targetEntitysetKey;
-            transformed[`${key}@odata.bind`] = (value as (string | number)[]).map((v: string | number) =>
-              typeof v === 'string' && v.startsWith('$') ? v : `/${target}(${v})`
-            );
-          } else if (value.length > 0 && Array.isArray(value[0])) {
-            // Array of [entityset, id] tuples
-            transformed[`${key}@odata.bind`] = (value as [string, string | number][]).map(
-              ([set, id]) => `/${set}(${id})`
-            );
-          } else {
-            // Array of objects - deep insert (recursive)
-            const targetEntitysetKey = Array.isArray(navDef.targetEntitysetKey)
-              ? navDef.targetEntitysetKey[0]
-              : navDef.targetEntitysetKey;
-            if (targetEntitysetKey != null) {
-              const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-              transformed[key] = (value as any[]).map((item: any) =>
-                typeof item === 'object' && item !== null
-                  ? transformCreateObjectForBind(item, targetEntity, schema)
-                  : item
-              );
-            } else {
-              transformed[key] = value;
-            }
-          }
-        } else {
-          transformed[key] = value;
-        }
-      }
+      assignNavBind(
+        transformed,
+        key,
+        value,
+        navDef.collection === true,
+        firstEntitySetKey(navDef.targetEntitysetKey),
+        schema
+      );
     } else {
       transformed[key] = value;
     }
   }
-  
+
   return transformed;
 }
 
@@ -311,80 +338,46 @@ export function transformUpdateObjectForBind<S extends Schema<S>>(
 ): any {
   if (!entityDef || !entityDef.navigations) return updateObject;
   const transformed: any = {};
-  
+
   for (const [key, value] of Object.entries(updateObject)) {
-    // Check for batch reference first
-    if (typeof value === 'string' && value.startsWith('$')) {
+    if (isBatchRef(value)) {
       transformed[`${key}@odata.bind`] = value;
       continue;
     }
 
     const navDef = entityDef.navigations[key as keyof typeof entityDef.navigations];
     if (navDef && navDef.targetEntitysetKey) {
+      const targetEntitysetKey = firstEntitySetKey(navDef.targetEntitysetKey);
       if (value === null) {
-        // Set navigation to null
         transformed[key] = null;
       } else if (Array.isArray(value) && !navDef.collection && value.length === 2) {
-        // Single-valued navigation with explicit entityset: [entityset, id]
         const [set, id] = value as [string, string | number];
-        transformed[`${key}@odata.bind`] = `/${set}(${id})`;
+        transformed[`${key}@odata.bind`] = bindPath(set, id);
       } else if ((typeof value === 'string' || typeof value === 'number') && !navDef.collection) {
-        // Single-valued navigation with plain ID
-        const target = Array.isArray(navDef.targetEntitysetKey)
-          ? navDef.targetEntitysetKey[0]
-          : navDef.targetEntitysetKey;
-        transformed[`${key}@odata.bind`] = `/${target}(${value})`;
+        transformed[`${key}@odata.bind`] = bindPath(targetEntitysetKey, value);
       } else if (
         navDef.collection &&
         Array.isArray(value) &&
         (value.length === 0 ||
           (typeof value[0] === 'object' && value[0] !== null && !Array.isArray(value[0])))
       ) {
-        // Collection navigation pure replace: array of entity objects (each item serialized like create)
-        const targetEntitysetKey = Array.isArray(navDef.targetEntitysetKey)
-          ? navDef.targetEntitysetKey[0]
-          : navDef.targetEntitysetKey;
-        if (targetEntitysetKey != null) {
-          const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-          transformed[key] = (value as any[]).map((item: any) =>
-            typeof item === 'object' && item !== null
-              ? transformCreateObjectForBind(item, targetEntity, schema)
-              : item
-          );
-        } else {
-          transformed[key] = value;
-        }
+        transformed[key] = transformDeepInsertArray(value, targetEntitysetKey, schema);
       } else if (typeof value === 'object' && value !== null) {
-        // Check if it's a collection operation spec
         const spec = value as { replace?: any[]; add?: any[]; remove?: any[] };
         if (spec.replace || spec.add || spec.remove) {
-          // Collection operation
           const transformedSpec: any = {};
-          const targetEntitysetKey = Array.isArray(navDef.targetEntitysetKey)
-            ? navDef.targetEntitysetKey[0]
-            : navDef.targetEntitysetKey;
-          
-          const formatRef = (v: string | number | [string, string | number]) => {
-            // Check for batch reference
-            if (typeof v === 'string' && v.startsWith('$')) return v;
-            // Explicit entityset format
-            if (Array.isArray(v)) return `/${v[0]}(${v[1]})`;
-            // Use resolved entityset
-            return `/${targetEntitysetKey}(${v})`;
-          };
-          
+          const ref = (v: string | number | [string, string | number]) => formatRef(v, targetEntitysetKey);
           if (spec.replace && Array.isArray(spec.replace)) {
-            transformedSpec.replace = spec.replace.map(formatRef);
+            transformedSpec.replace = spec.replace.map(ref);
           }
           if (spec.add && Array.isArray(spec.add)) {
-            transformedSpec.add = spec.add.map(formatRef);
+            transformedSpec.add = spec.add.map(ref);
           }
           if (spec.remove && Array.isArray(spec.remove)) {
-            transformedSpec.remove = spec.remove.map(formatRef);
+            transformedSpec.remove = spec.remove.map(ref);
           }
           transformed[key] = transformedSpec;
         } else {
-          // Regular object - pass through (not a navigation operation)
           transformed[key] = value;
         }
       } else {
@@ -394,17 +387,41 @@ export function transformUpdateObjectForBind<S extends Schema<S>>(
       transformed[key] = value;
     }
   }
-  
+
   return transformed;
 }
 
-// ============================================================================
-// Build Create/Update Requests
-// ============================================================================
+function buildEntityRequest(
+  method: 'POST' | 'PATCH',
+  path: string,
+  body: unknown,
+  options: CreateOperationOptions<any> | undefined,
+  baseUrl: string
+): Request {
+  let url = normalizePath(baseUrl, path);
+  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'application/json' });
+  const select = options?.select;
 
-/**
- * Build HTTP Request for create operation
- */
+  if (
+    options?.prefer?.return_representation === true ||
+    (select && Array.isArray(select) && select.length > 0)
+  ) {
+    headers.set('Prefer', 'return=representation');
+  }
+
+  if (options?.headers) {
+    for (const [key, value] of Object.entries(options.headers)) {
+      headers.set(key, value);
+    }
+  }
+
+  if (select && Array.isArray(select) && select.length > 0) {
+    url += `?$select=${select.join(',')}`;
+  }
+
+  return new Request(url, { method, headers, body: JSON.stringify(body) });
+}
+
 export function buildCreateRequest<S extends Schema<S>>(
   path: string,
   createObject: CreateObject<any>,
@@ -413,39 +430,15 @@ export function buildCreateRequest<S extends Schema<S>>(
   entityDef: QueryableEntity,
   schema: S
 ): Request {
-  let url = normalizePath(baseUrl, path);
-  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'application/json' });
-  const select = options?.select;
-  const preferParts: string[] = [];
-  
-  if (
-    options?.prefer?.return_representation === true ||
-    (select && Array.isArray(select) && select.length > 0)
-  ) {
-    preferParts.push('return=representation');
-  }
-  
-  if (preferParts.length > 0) {
-    headers.set('Prefer', preferParts.join(','));
-  }
-  
-  if (options?.headers) {
-    for (const [key, value] of Object.entries(options.headers)) {
-      headers.set(key, value);
-    }
-  }
-  
-  if (select && Array.isArray(select) && select.length > 0) {
-    url += `?$select=${select.join(',')}`;
-  }
-  
-  const transformedObject = transformCreateObjectForBind(createObject, entityDef, schema);
-  return new Request(url, { method: 'POST', headers, body: JSON.stringify(transformedObject) });
+  return buildEntityRequest(
+    'POST',
+    path,
+    transformCreateObjectForBind(createObject, entityDef, schema),
+    options,
+    baseUrl
+  );
 }
 
-/**
- * Build HTTP Request for update operation
- */
 export function buildUpdateRequest<S extends Schema<S>>(
   path: string,
   updateObject: UpdateObject<any>,
@@ -454,34 +447,13 @@ export function buildUpdateRequest<S extends Schema<S>>(
   entityDef: QueryableEntity,
   schema: S
 ): Request {
-  let url = normalizePath(baseUrl, path);
-  const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'application/json' });
-  const select = options?.select;
-  const preferParts: string[] = [];
-  
-  if (
-    options?.prefer?.return_representation === true ||
-    (select && Array.isArray(select) && select.length > 0)
-  ) {
-    preferParts.push('return=representation');
-  }
-  
-  if (preferParts.length > 0) {
-    headers.set('Prefer', preferParts.join(','));
-  }
-  
-  if (options?.headers) {
-    for (const [key, value] of Object.entries(options.headers)) {
-      headers.set(key, value);
-    }
-  }
-  
-  if (select && Array.isArray(select) && select.length > 0) {
-    url += `?$select=${select.join(',')}`;
-  }
-  
-  const transformedObject = transformUpdateObjectForBind(updateObject, entityDef, schema);
-  return new Request(url, { method: 'PATCH', headers, body: JSON.stringify(transformedObject) });
+  return buildEntityRequest(
+    'PATCH',
+    path,
+    transformUpdateObjectForBind(updateObject, entityDef, schema),
+    options,
+    baseUrl
+  );
 }
 
 // ============================================================================
@@ -501,85 +473,25 @@ export function transformActionParameters<S extends Schema<S>>(
   
   for (const [key, value] of Object.entries(parameters)) {
     const paramDef = parameterDefs[key];
-    
-    // Check if this parameter is a navigation type (entity type parameter)
+
     if (paramDef && typeof paramDef === 'object' && 'type' in paramDef && paramDef.type === 'navigation') {
       const navDef = paramDef as NavigationType<any>;
-      const targetEntityType = navDef.target as string;
-      const isCollection = navDef.collection === true;
-      
-      // Resolve entityset(s) for this entity type
-      const entitysetKey = findEntitySetsForEntityType(schema, targetEntityType);
-      
+      const entitysetKey = findEntitySetsForEntityType(schema, navDef.target as string);
+
       if (!entitysetKey) {
-        // No entityset found - pass through as-is (shouldn't happen in valid schemas)
         transformed[key] = value;
         continue;
       }
-      
-      // Resolve target entityset (use first if multiple)
-      const targetEntitysetKey = Array.isArray(entitysetKey) ? entitysetKey[0] : entitysetKey;
-      
-      if (!isCollection) {
-        // Single-valued navigation parameter
-        if (typeof value === 'string' && value.startsWith('$')) {
-          // Batch reference
-          transformed[`${key}@odata.bind`] = value;
-        } else if (
-          Array.isArray(value) &&
-          value.length === 2 &&
-          typeof value[0] === 'string' &&
-          (typeof value[1] === 'string' || typeof value[1] === 'number')
-        ) {
-          // Explicit entityset format: [entityset, id]
-          const [set, id] = value as [string, string | number];
-          transformed[`${key}@odata.bind`] = `/${set}(${id})`;
-        } else if (typeof value === 'string' || typeof value === 'number') {
-          // Plain ID - resolve entityset from parameter definition
-          transformed[`${key}@odata.bind`] = `/${targetEntitysetKey}(${value})`;
-        } else if (typeof value === 'object' && value !== null) {
-          // Deep insert - recursive transformation
-          if (targetEntitysetKey != null) {
-            const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-            transformed[key] = transformCreateObjectForBind(value, targetEntity, schema);
-          } else {
-            transformed[key] = value;
-          }
-        } else {
-          transformed[key] = value;
-        }
-      } else {
-        // Collection navigation parameter
-        if (Array.isArray(value)) {
-          if (value.length > 0 && (typeof value[0] === 'string' || typeof value[0] === 'number')) {
-            // Array of string/number IDs (or batch references)
-            transformed[`${key}@odata.bind`] = (value as (string | number)[]).map((v: string | number) =>
-              typeof v === 'string' && v.startsWith('$') ? v : `/${targetEntitysetKey}(${v})`
-            );
-          } else if (value.length > 0 && Array.isArray(value[0])) {
-            // Array of [entityset, id] tuples
-            transformed[`${key}@odata.bind`] = (value as [string, string | number][]).map(
-              ([set, id]) => `/${set}(${id})`
-            );
-          } else {
-            // Array of objects - deep insert (recursive)
-            if (targetEntitysetKey != null) {
-              const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-              transformed[key] = (value as any[]).map((item: any) =>
-                typeof item === 'object' && item !== null
-                  ? transformCreateObjectForBind(item, targetEntity, schema)
-                  : item
-              );
-            } else {
-              transformed[key] = value;
-            }
-          }
-        } else {
-          transformed[key] = value;
-        }
-      }
+
+      assignNavBind(
+        transformed,
+        key,
+        value,
+        navDef.collection === true,
+        firstEntitySetKey(entitysetKey),
+        schema
+      );
     } else {
-      // Not a navigation parameter - pass through as-is
       transformed[key] = value;
     }
   }

@@ -71,22 +71,4 @@ export type CollectionQueryObject<
 export type SingleQueryObject<
   E extends QueryableEntity,
   S extends Schema<S> = Schema<any>
-> = {
-  select?: readonly (keyof E['properties'])[];
-  expand?: {
-    [K in keyof E['navigations']]?: E['navigations'][K]['targetEntitysetKey'] extends string | string[]
-      ? E['navigations'][K]['collection'] extends true
-        ? CollectionQueryObject<ResolveNavigationTarget<S, E['navigations'][K]['targetEntitysetKey']>, S>
-        : SingleExpandObject<ResolveNavigationTarget<S, E['navigations'][K]['targetEntitysetKey']>, S>
-      : never;
-  };
-};
-
-// Query result data types (simplified for now, will be properly typed later)
-export type CollectionQueryResultData<E extends QueryableEntity, Q extends CollectionQueryObject<E>> = {
-  data: any[];
-};
-
-export type SingleQueryResultData<E extends QueryableEntity, Q extends SingleQueryObject<E>> = {
-  data: any;
-};
+> = SingleExpandObject<E, S>;

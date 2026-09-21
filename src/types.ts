@@ -304,58 +304,9 @@ export type EntitySetToQueryableEntity<S extends Schema<S>, ES extends keyof S['
 };
 
 // ============================================================================
-// Filter Bound Operations
-// ============================================================================
-
-// Filter actions/functions by target entitytype and scope
-export type BoundOperationsForEntity<
-  Ops extends Record<string, any>,
-  Target extends string,
-  Scope extends 'entity' | 'collection'
-> = {
-  [K in keyof Ops]: Ops[K] extends { type: 'bound'; target: infer T; collection: infer C }
-    ? T extends Target
-      ? C extends boolean
-        ? C extends false
-          ? Scope extends 'entity'
-            ? Ops[K]
-            : never
-          : Scope extends 'collection'
-          ? Ops[K]
-          : never
-        : never
-      : never
-    : never;
-};
-
-// Extract keys of bound operations for a given entity and scope
-export type BoundOperationKeys<
-  Ops extends Record<string, any>,
-  Target extends string,
-  Scope extends 'entity' | 'collection'
-> = keyof BoundOperationsForEntity<Ops, Target, Scope>;
-
-// ============================================================================
 // Filter Unbound Operations
 // ============================================================================
 
-// Extract keys of unbound actions
-export type UnboundActionKeys<S extends Schema<S>> = {
-  [K in keyof NonNullable<S['actions']>]: NonNullable<S['actions']>[K] extends { type: 'unbound' }
-    ? K
-    : never;
-}[keyof NonNullable<S['actions']>];
-
-// Extract keys of unbound functions
-export type UnboundFunctionKeys<S extends Schema<S>> = {
-  [K in keyof NonNullable<S['functions']>]: NonNullable<S['functions']>[K] extends {
-    type: 'unbound';
-  }
-    ? K
-    : never;
-}[keyof NonNullable<S['functions']>];
-
-// Extract action import keys (public names) from actionImports
 export type ImportedActionKeys<S extends Schema<S>> = S['actionImports'] extends Record<string, any>
   ? Extract<keyof S['actionImports'], string>
   : never;
@@ -425,15 +376,3 @@ export type BoundFunctionKeysForEntitySet<
     ? K
     : never;
 }[keyof NonNullable<S['functions']>];
-
-// ============================================================================
-// Helper Types
-// ============================================================================
-
-// Check if a type is never
-export type IsNever<T> = [T] extends [never] ? true : false;
-
-// Extract non-never keys from a record
-export type NonNeverKeys<T extends Record<string, any>> = {
-  [K in keyof T]: IsNever<T[K]> extends true ? never : K;
-}[keyof T];

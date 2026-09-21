@@ -111,7 +111,6 @@ function parseBatchResponse(text: string, contentType: string): BatchItemResult[
   }
 
   const delimiter = `--${boundary}`;
-  const closingDelimiter = `--${boundary}--`;
   const parts: BatchItemResult[] = [];
 
   // Split by delimiter; first segment is typically empty or preamble
@@ -406,8 +405,13 @@ export class OdataBatch<S extends Schema<S>> {
       currentContentId = 1;
     };
 
-    for (const req of this.#requests) {
-      const bodyText = req.request.body ? await req.request.clone().text() : '';
+    const bodyTexts = await Promise.all(
+      this.#requests.map((req) => (req.request.body ? req.request.clone().text() : Promise.resolve('')))
+    );
+
+    for (let i = 0; i < this.#requests.length; i++) {
+      const req = this.#requests[i]!;
+      const bodyText = bodyTexts[i]!;
 
       if (req.inChangeset) {
         if (!currentChangesetBoundary) {

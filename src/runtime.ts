@@ -1,51 +1,67 @@
-// ============================================================================
-// Runtime QueryableEntity Builder
-// ============================================================================
-
 import type { Schema, EntityType, NavigationType } from './schema';
 import type { QueryableEntity } from './types';
 
-// ============================================================================
-// Helper: Check if a property is a navigation
-// ============================================================================
+type SchemaCache = {
+  entitysetsByType: Map<string, string[]>;
+  entitysetsIndexed: boolean;
+  flattened: Map<string, EntityType<any, any, any>>;
+  queryable: Map<string, QueryableEntity>;
+};
+
+const schemaCaches = new WeakMap<object, SchemaCache>();
+
+function getSchemaCache(schema: object): SchemaCache {
+  let cache = schemaCaches.get(schema);
+  if (!cache) {
+    cache = {
+      entitysetsByType: new Map(),
+      entitysetsIndexed: false,
+      flattened: new Map(),
+      queryable: new Map(),
+    };
+    schemaCaches.set(schema, cache);
+  }
+  return cache;
+}
 
 function isNavigation(prop: any): prop is NavigationType<any> {
   return prop && typeof prop === 'object' && prop.type === 'navigation';
 }
 
-// ============================================================================
-// Helper: Flatten EntityType with baseType inheritance
-// ============================================================================
-
 function flattenEntityType<S extends Schema<S>>(
   schema: S,
   entitytypeName: string,
+  cache: SchemaCache,
   visited: Set<string> = new Set()
 ): EntityType<any, any, any> {
-  // Circular reference protection
   if (visited.has(entitytypeName)) {
     return { properties: {} } as EntityType<any, any, any>;
+  }
+
+  const cached = cache.flattened.get(entitytypeName);
+  if (cached) {
+    return cached;
   }
 
   const entitytypes = schema.entitytypes as Record<string, EntityType<any, any, any>>;
   const entitytype = entitytypes[entitytypeName];
   if (!entitytype) {
-    return { properties: {} } as EntityType<any, any, any>;
+    const empty = { properties: {} } as EntityType<any, any, any>;
+    cache.flattened.set(entitytypeName, empty);
+    return empty;
   }
 
   visited.add(entitytypeName);
 
-  // If no baseType, return as-is
   if (!entitytype.baseType) {
     visited.delete(entitytypeName);
+    cache.flattened.set(entitytypeName, entitytype as EntityType<any, any, any>);
     return entitytype as EntityType<any, any, any>;
   }
 
-  // Recursively flatten baseType
   const baseTypeName = entitytype.baseType as string;
-  const baseType = flattenEntityType(schema, baseTypeName, visited);
-  
-  // Merge properties objects (current overrides base)
+  const baseType = flattenEntityType(schema, baseTypeName, cache, visited);
+
   const flattened: EntityType<any, any, any> = {
     baseType: entitytype.baseType,
     properties: {
@@ -55,93 +71,94 @@ function flattenEntityType<S extends Schema<S>>(
   };
 
   visited.delete(entitytypeName);
+  cache.flattened.set(entitytypeName, flattened);
   return flattened;
 }
 
-// ============================================================================
-// Helper: Find entityset(s) for an entitytype
-// ============================================================================
+function entitysetsForType(schema: object, entitytypeName: string, cache: SchemaCache): string | string[] {
+  if (!cache.entitysetsIndexed) {
+    const entitysetsRecord = (schema as Schema<any>).entitysets as Record<string, { entitytype: string }>;
+    for (const [entitysetName, entityset] of Object.entries(entitysetsRecord)) {
+      const list = cache.entitysetsByType.get(entityset.entitytype);
+      if (list) {
+        list.push(entitysetName);
+      } else {
+        cache.entitysetsByType.set(entityset.entitytype, [entitysetName]);
+      }
+    }
+    cache.entitysetsIndexed = true;
+  }
+
+  const entitysets = cache.entitysetsByType.get(entitytypeName);
+  if (!entitysets || entitysets.length === 0) {
+    return '';
+  }
+  if (entitysets.length === 1) {
+    return entitysets[0]!;
+  }
+  return entitysets;
+}
 
 export function findEntitySetsForEntityType<S extends Schema<S>>(
   schema: S,
   entitytypeName: string
 ): string | string[] {
-  const entitysets: string[] = [];
-  const entitysetsRecord = schema.entitysets as Record<string, { entitytype: string }>;
-
-  for (const [entitysetName, entityset] of Object.entries(entitysetsRecord)) {
-    if (entityset.entitytype === entitytypeName) {
-      entitysets.push(entitysetName);
-    }
-  }
-
-  if (entitysets.length === 0) {
-    return '';
-  } else if (entitysets.length === 1) {
-    return entitysets[0]!;
-  } else {
-    return entitysets;
-  }
+  return entitysetsForType(schema, entitytypeName, getSchemaCache(schema));
 }
-
-// ============================================================================
-// Build QueryableEntity from EntitySet
-// ============================================================================
 
 export function buildQueryableEntity<S extends Schema<S>>(
   schema: S,
   entitysetName: string | string[]
 ): QueryableEntity {
-  // Handle array case - use first entityset
-  const actualEntitysetName = Array.isArray(entitysetName) 
-    ? (entitysetName[0] || '') 
+  const actualEntitysetName = Array.isArray(entitysetName)
+    ? (entitysetName[0] || '')
     : entitysetName;
-  
+
   if (!actualEntitysetName) {
     return {
       properties: {},
       navigations: {},
     };
   }
-  
+
+  const cache = getSchemaCache(schema);
+  const cachedEntity = cache.queryable.get(actualEntitysetName);
+  if (cachedEntity) {
+    return cachedEntity;
+  }
+
   const entitysets = schema.entitysets as Record<string, { entitytype: string }>;
   const entityset = entitysets[actualEntitysetName];
   if (!entityset) {
-    return {
+    const empty = {
       properties: {},
       navigations: {},
     };
+    cache.queryable.set(actualEntitysetName, empty);
+    return empty;
   }
 
-  const entitytypeName = entityset.entitytype;
-  const flattenedEntityType = flattenEntityType(schema, entitytypeName);
-
-  // Extract properties (non-navigation fields)
+  const flattenedEntityType = flattenEntityType(schema, entityset.entitytype, cache);
   const properties: Record<string, any> = {};
+  const navigations: Record<string, { target: any; targetEntitysetKey: string | string[]; collection: boolean }> = {};
+
   for (const [key, value] of Object.entries(flattenedEntityType.properties || {})) {
-    if (!isNavigation(value)) {
+    if (isNavigation(value)) {
+      const targetEntitytypeName = value.target as string;
+      navigations[key] = {
+        target: targetEntitytypeName,
+        targetEntitysetKey: entitysetsForType(schema, targetEntitytypeName, cache) || '',
+        collection: value.collection === true,
+      };
+    } else {
       properties[key] = value;
     }
   }
 
-  // Extract navigations
-  const navigations: Record<string, { target: any; targetEntitysetKey: string | string[]; collection: boolean }> = {};
-  for (const [key, value] of Object.entries(flattenedEntityType.properties || {})) {
-    if (isNavigation(value)) {
-      const targetEntitytypeName = value.target as string;
-      const targetEntitysetKey = findEntitySetsForEntityType(schema, targetEntitytypeName);
-      const collection = value.collection === true;
-
-      navigations[key] = {
-        target: targetEntitytypeName,
-        targetEntitysetKey: targetEntitysetKey || '',
-        collection,
-      };
-    }
-  }
-
-  return {
+  const entity = {
     properties,
     navigations,
   } as QueryableEntity;
+  cache.queryable.set(actualEntitysetName, entity);
+  return entity;
 }

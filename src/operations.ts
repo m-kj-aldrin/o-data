@@ -145,13 +145,7 @@ export type CreateOperationOptions<QE extends QueryableEntity> = {
 };
 
 // Update operation options
-export type UpdateOperationOptions<QE extends QueryableEntity> = {
-  prefer?: {
-    return_representation?: boolean;
-  };
-  select?: readonly (keyof QE['properties'])[];
-  headers?: Record<string, string>;
-};
+export type UpdateOperationOptions<QE extends QueryableEntity> = CreateOperationOptions<QE>;
 
 // ============================================================================
 // Operation Parameters

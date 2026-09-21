@@ -23,7 +23,6 @@ export type { OdataBatchPublic, BatchExecuteResult, BatchItemResult };
 import type {
   CollectionQueryResponse,
   CollectionQueryResponseByResult,
-  SingleQueryResponse,
   SingleQueryResponseByResult,
   ExtractQueryResultShape,
   Simplify,
@@ -38,7 +37,7 @@ import type {
   SingleQueryObject,
   QueryOperationOptions,
 } from './query';
-import { buildQueryString, buildCreateRequest, buildUpdateRequest, buildActionRequest, buildFunctionRequest } from './serialization.js';
+import { buildQueryString, buildCreateRequest, buildUpdateRequest, buildActionRequest, buildFunctionRequest, normalizePath } from './serialization.js';
 import type {
   CreateObject,
   UpdateObject,
@@ -57,6 +56,56 @@ export type OdataClientOptions = {
   baseUrl: string;
   transport: Fetch;
 };
+
+function headersFromQueryOptions(opts?: QueryOperationOptions): Headers | undefined {
+  const hasHeaders = opts?.prefer?.maxpagesize != null || (opts?.headers && Object.keys(opts.headers).length > 0);
+  if (!hasHeaders) {
+    return undefined;
+  }
+  const headers = new Headers();
+  if (opts?.prefer?.maxpagesize != null) {
+    headers.set('Prefer', `odata.maxpagesize=${opts.prefer.maxpagesize}`);
+  }
+  if (opts?.headers) {
+    for (const [key, value] of Object.entries(opts.headers)) {
+      headers.set(key, value);
+    }
+  }
+  return headers;
+}
+
+async function readErrorBody(response: Response): Promise<any> {
+  try {
+    return await response.json();
+  } catch {
+    return await response.text();
+  }
+}
+
+async function readJsonBody(response: Response, emptyOn304 = false): Promise<any> {
+  if (response.status === 204 || (emptyOn304 && response.status === 304)) {
+    return {};
+  }
+  return response.json();
+}
+
+function httpResult<T>(response: Response, result: T, ok = response.ok) {
+  return {
+    ok,
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+    result,
+  };
+}
+
+async function sendOperation<T>(transport: Fetch, request: Request, emptyOn304 = false): Promise<T> {
+  const response = await transport(request);
+  if (!response.ok) {
+    return httpResult(response, { error: await readErrorBody(response) }, false) as T;
+  }
+  return httpResult(response, await readJsonBody(response, emptyOn304), true) as T;
+}
 
 // Extract entityset names from schema
 type EntitySetNames<S extends Schema<S>> = keyof S['entitysets'];
@@ -128,32 +177,10 @@ export class OdataClient<S extends Schema<S>> {
       false // Unbound actions use import name, not FQN
     );
     
-    const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
-    }
-
-    const result = response.status === 204 ? {} : await response.json();
-    return {
-      ok: true,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result,
-    } as ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>;
+    return sendOperation<ActionResponse<S, NonNullable<S['actions']>[ActionName]['returnType']>>(
+      this.#options.transport,
+      request
+    );
   }
 
   /**
@@ -192,32 +219,10 @@ export class OdataClient<S extends Schema<S>> {
       false // Unbound functions use import name, not FQN
     );
     
-    const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
-    }
-
-    const result = response.status === 204 ? {} : await response.json();
-    return {
-      ok: true,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result,
-    } as FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>;
+    return sendOperation<FunctionResponse<S, NonNullable<S['functions']>[FunctionName]['returnType']>>(
+      this.#options.transport,
+      request
+    );
   }
 
   /**
@@ -257,21 +262,10 @@ function buildCollectionQueryResponse<
   if (out.ok && data?.['@odata.nextLink']) {
     const nextFn = async (nextOpts?: QueryOperationOptions) => {
       const opts = nextOpts ?? o;
-      const hasHeaders = opts?.prefer?.maxpagesize != null || (opts?.headers && Object.keys(opts.headers).length > 0);
-      const headers = hasHeaders ? new Headers() : undefined;
-      if (headers) {
-        if (opts?.prefer?.maxpagesize != null) {
-          headers.set('Prefer', `odata.maxpagesize=${opts.prefer.maxpagesize}`);
-        }
-        if (opts?.headers) {
-          for (const [key, value] of Object.entries(opts.headers)) {
-            headers.set(key, value);
-          }
-        }
-      }
+      const headers = headersFromQueryOptions(opts);
       const nextRequest = new Request(data['@odata.nextLink'], headers ? { headers } : undefined);
       const nextRes = await transport(nextRequest);
-      const nextData = nextRes.status === 204 || nextRes.status === 304 ? {} : await nextRes.json();
+      const nextData = await readJsonBody(nextRes, true);
       return buildCollectionQueryResponse<QE, Q, O, S>(nextRes, nextData, transport, opts as O);
     };
     (out as { next: (options?: QueryOperationOptions) => Promise<CollectionQueryResponse<QE, Q, O, S>> }).next = nextFn;
@@ -306,33 +300,12 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E ext
     o?: O
   ): Promise<CollectionQueryResponseByResult<Simplify<ExtractQueryResultShape<QE, Q, S>>, O>> {
     const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
-    const url = this.buildUrl(queryString);
-    const hasHeaders = o?.prefer?.maxpagesize != null || (o?.headers && Object.keys(o.headers).length > 0);
-    const headers = hasHeaders ? new Headers() : undefined;
-    if (headers) {
-      if (o?.prefer?.maxpagesize != null) {
-        headers.set('Prefer', `odata.maxpagesize=${o.prefer.maxpagesize}`);
-      }
-      if (o?.headers) {
-        for (const [key, value] of Object.entries(o.headers)) {
-          headers.set(key, value);
-        }
-      }
-    }
+    const url = normalizePath(this.#options.baseUrl, this.#path + queryString);
+    const headers = headersFromQueryOptions(o);
     const request = new Request(url, headers ? { headers } : undefined);
     const response = await this.#options.transport(request);
-    const data = response.status === 204 || response.status === 304 ? {} : await response.json();
+    const data = await readJsonBody(response, true);
     return buildCollectionQueryResponse<QE, Q, O, S>(response, data, this.#options.transport, o) as CollectionQueryResponseByResult<Simplify<ExtractQueryResultShape<QE, Q, S>>, O>;
-  }
-
-  /**
-   * Build the full URL for this operation.
-   */
-  private buildUrl(queryString: string = ''): string {
-    const baseUrl = this.#options.baseUrl.endsWith('/') 
-      ? this.#options.baseUrl.slice(0, -1) 
-      : this.#options.baseUrl;
-    return `${baseUrl}/${this.#path}${queryString}`;
   }
 
   /**
@@ -351,15 +324,9 @@ class CollectionOperation<S extends Schema<S>, QE extends QueryableEntity, E ext
       this.#schema
     );
     const response = await this.#options.transport(request);
-    const data = response.status === 204 ? {} : await response.json();
+    const data = await readJsonBody(response);
     
-    return {
-      ok: response.ok,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result: data,
-    } as CreateResponse<QE, O>;
+    return httpResult(response, data) as CreateResponse<QE, O>;
   }
 
   /**
@@ -424,28 +391,12 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
     o?: O
   ): Promise<SingleQueryResponseByResult<Simplify<ExtractQueryResultShape<QE, Q, S>>>> {
     const queryString = buildQueryString(q as any, this.#entityset, this.#schema);
-    const url = this.buildUrl(queryString);
+    const url = normalizePath(this.#options.baseUrl, this.#path + queryString);
     const request = new Request(url);
     const response = await this.#options.transport(request);
-    const data = response.status === 204 || response.status === 304 ? {} : await response.json();
+    const data = await readJsonBody(response, true);
     
-    return {
-      ok: response.ok,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result: data,
-    } as SingleQueryResponseByResult<Simplify<ExtractQueryResultShape<QE, Q, S>>>;
-  }
-
-  /**
-   * Build the full URL for this operation.
-   */
-  private buildUrl(queryString: string = ''): string {
-    const baseUrl = this.#options.baseUrl.endsWith('/') 
-      ? this.#options.baseUrl.slice(0, -1) 
-      : this.#options.baseUrl;
-    return `${baseUrl}/${this.#path}${queryString}`;
+    return httpResult(response, data) as SingleQueryResponseByResult<Simplify<ExtractQueryResultShape<QE, Q, S>>>;
   }
 
   /**
@@ -464,50 +415,18 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       this.#schema
     );
     const response = await this.#options.transport(request);
-    const data = response.status === 204 ? {} : await response.json();
+    const data = await readJsonBody(response);
     
-    return {
-      ok: response.ok,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result: data,
-    } as UpdateResponse<QE, O>;
+    return httpResult(response, data) as UpdateResponse<QE, O>;
   }
 
   /**
    * Delete an entity.
    */
   async delete(): Promise<DeleteResponse> {
-    const url = this.buildUrl();
+    const url = normalizePath(this.#options.baseUrl, this.#path);
     const request = new Request(url, { method: 'DELETE' });
-    const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as DeleteResponse;
-    }
-
-    const data = response.status === 204 || response.status === 304 ? {} : await response.json();
-
-    return {
-      ok: true,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result: data,
-    } as DeleteResponse;
+    return sendOperation<DeleteResponse>(this.#options.transport, request, true);
   }
 
   /**
@@ -585,32 +504,10 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       true // Bound actions always use FQN
     );
     
-    const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
-    }
-
-    const result = response.status === 204 ? {} : await response.json();
-    return {
-      ok: true,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result,
-    } as ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>;
+    return sendOperation<ActionResponse<S, NonNullable<S['actions']>[K]['returnType']>>(
+      this.#options.transport,
+      request
+    );
   }
 
   /**
@@ -637,31 +534,9 @@ class SingleOperation<S extends Schema<S>, QE extends QueryableEntity, E extends
       true // Bound functions always use FQN
     );
     
-    const response = await this.#options.transport(request);
-
-    if (!response.ok) {
-      let error: any;
-      try {
-        error = await response.json();
-      } catch {
-        error = await response.text();
-      }
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        result: { error },
-      } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
-    }
-
-    const result = response.status === 204 ? {} : await response.json();
-    return {
-      ok: true,
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-      result,
-    } as FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>;
+    return sendOperation<FunctionResponse<S, NonNullable<S['functions']>[K]['returnType']>>(
+      this.#options.transport,
+      request
+    );
   }
 }

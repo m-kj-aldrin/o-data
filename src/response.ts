@@ -41,19 +41,9 @@ export type Simplify<T> = T extends readonly (infer U)[]
 // Query Response Types
 // ============================================================================
 
-import type { QueryableEntity, EntitySetToQueryableEntity, ODataTypeToTS } from './types';
+import type { QueryableEntity, ODataTypeToTS } from './types';
 import type { Schema, ODataType } from './schema';
 import type { CollectionQueryObject, SingleQueryObject, SingleExpandObject, QueryOperationOptions } from './query';
-
-// Helper to resolve navigation target QueryableEntity from targetEntitysetKey (same as in query.ts)
-type ResolveNavigationTarget<
-  S extends Schema<S>,
-  TargetKey extends string | string[]
-> = TargetKey extends string
-  ? TargetKey extends keyof S['entitysets']
-    ? EntitySetToQueryableEntity<S, TargetKey>
-    : QueryableEntity
-  : QueryableEntity;
 
 // Extract select keys as union type from query object
 type ExtractSelectKeys<
@@ -200,34 +190,17 @@ export type CreateResponse<
 // Update Response Types
 // ============================================================================
 
-// Determine data type based on options (same logic as Create)
-type UpdateDataShape<
-  QE extends QueryableEntity,
-  O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } }
-> = O['prefer'] extends { return_representation: true }
-  ? QE['properties'] // Return all properties when return_representation is true
-  : O['select'] extends readonly (keyof QE['properties'])[]
-  ? Pick<QE['properties'], ExtractSelectKeysForOperation<QE, O['select']>> // Return selected properties
-  : undefined; // No data returned when no select and no return_representation
-
 export type UpdateResultData<
   QE extends QueryableEntity = any,
   O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } } = any
-> = O['prefer'] extends { return_representation: true }
-  ? UpdateDataShape<QE, O> & ODataMetadata
-  : O['select'] extends readonly (keyof QE['properties'])[]
-  ? UpdateDataShape<QE, O> & ODataMetadata
-  : ODataMetadata;
+> = CreateResultData<QE, O>;
 
-export type UpdateResultError = ODataError;
+export type UpdateResultError = CreateResultError;
 
 export type UpdateResponse<
   QE extends QueryableEntity = any,
   O extends { select?: readonly (keyof QE['properties'])[]; prefer?: { return_representation?: boolean } } = any
-> = ODataResponse<
-  UpdateResultData<QE, O>,
-  UpdateResultError
->;
+> = CreateResponse<QE, O>;
 
 // ============================================================================
 // Delete Response Types

@@ -26,28 +26,23 @@ interface NormalizedMaskRules {
   onlyBoundActionsByEntity: Map<string, RegExp[]>;
 }
 
-function normalizeExcludeFilters(filters?: ExcludeFilters): NormalizedExcludeFilters {
-  const normalize = (patterns?: (string | RegExp)[]): RegExp[] => {
-    if (!patterns) return [];
-    return patterns.map((p) => (typeof p === 'string' ? new RegExp(p) : p));
-  };
+function toRegExps(patterns?: (string | RegExp)[]): RegExp[] {
+  if (!patterns) return [];
+  return patterns.map((p) => (typeof p === 'string' ? new RegExp(p) : p));
+}
 
+function normalizeExcludeFilters(filters?: ExcludeFilters): NormalizedExcludeFilters {
   return {
-    entities: normalize(filters?.entities),
-    complexTypes: normalize(filters?.complexTypes),
-    actions: normalize(filters?.actions),
-    functions: normalize(filters?.functions),
-    properties: normalize(filters?.properties),
-    navigations: normalize(filters?.navigations),
+    entities: toRegExps(filters?.entities),
+    complexTypes: toRegExps(filters?.complexTypes),
+    actions: toRegExps(filters?.actions),
+    functions: toRegExps(filters?.functions),
+    properties: toRegExps(filters?.properties),
+    navigations: toRegExps(filters?.navigations),
   };
 }
 
 function normalizeMaskRules(mask?: MaskRules): NormalizedMaskRules {
-  const normalize = (patterns?: (string | RegExp)[]): RegExp[] => {
-    if (!patterns) return [];
-    return patterns.map((p) => (typeof p === 'string' ? new RegExp(p) : p));
-  };
-
   const normalizeByEntity = (
     input?: Record<string, (string | RegExp)[] | 'ALL'>
   ): Map<string, { all: boolean; patterns: RegExp[] }> => {
@@ -57,7 +52,7 @@ function normalizeMaskRules(mask?: MaskRules): NormalizedMaskRules {
       if (value === 'ALL') {
         result.set(key, { all: true, patterns: [] });
       } else {
-        result.set(key, { all: false, patterns: normalize(value) });
+        result.set(key, { all: false, patterns: toRegExps(value) });
       }
     }
     return result;
@@ -69,17 +64,17 @@ function normalizeMaskRules(mask?: MaskRules): NormalizedMaskRules {
     const result = new Map<string, RegExp[]>();
     if (!input) return result;
     for (const [key, value] of Object.entries(input)) {
-      result.set(key, normalize(value));
+      result.set(key, toRegExps(value));
     }
     return result;
   };
 
   return {
-    entities: normalize(mask?.entities),
+    entities: toRegExps(mask?.entities),
     boundActionsByEntity: normalizeByEntity(mask?.boundActionsByEntity),
     boundFunctionsByEntity: normalizeByEntity(mask?.boundFunctionsByEntity),
-    unboundActions: normalize(mask?.unboundActions),
-    unboundFunctions: normalize(mask?.unboundFunctions),
+    unboundActions: toRegExps(mask?.unboundActions),
+    unboundFunctions: toRegExps(mask?.unboundFunctions),
     onlyBoundActionsByEntity: normalizeByEntityOnly(mask?.onlyBoundActionsByEntity),
   };
 }
@@ -753,65 +748,33 @@ export async function generateSchema(configPath?: string): Promise<void> {
   }
 
   // Helper to generate property code
-  function generatePropertyCode(
-    prop: CsdlProperty,
-    key?: CsdlKey
-  ): string {
-    const propName = prop['@_Name'];
-    if (propName.startsWith('_')) return '';
-
-    const { name: resolvedType, isCollection } = resolveType(prop['@_Type']);
-    const nullable = prop['@_Nullable'] !== 'false';
-
-    // Check if enum
-    if (enumTypes.has(resolvedType)) {
-      const shortName = getShortName(resolvedType);
-      const options: string[] = [];
-      if (isCollection) options.push('collection: true');
-      if (!nullable) options.push('nullable: false');
-      
-      if (options.length > 0) {
-        return `        "${propName}": { type: 'enum', target: '${shortName}', ${options.join(', ')} },\n`;
-      }
-      return `        "${propName}": { type: 'enum', target: '${shortName}' },\n`;
-    }
-
-    // Check if complex type
-    if (complexTypes.has(resolvedType)) {
-      const shortName = getShortName(resolvedType);
-      const options: string[] = [];
-      if (isCollection) options.push('collection: true');
-      if (!nullable) options.push('nullable: false');
-      
-      if (options.length > 0) {
-        return `        "${propName}": { type: 'complex', target: '${shortName}', ${options.join(', ')} },\n`;
-      }
-      return `        "${propName}": { type: 'complex', target: '${shortName}' },\n`;
-    }
-
-    // Check if EntityType (navigation)
-    if (includedEntityTypes.has(resolvedType)) {
-      const shortName = getShortName(resolvedType);
-      const options: string[] = [];
-      if (isCollection) options.push('collection: true');
-      if (!nullable) options.push('nullable: false');
-      
-      if (options.length > 0) {
-        return `        "${propName}": { type: 'navigation', target: '${shortName}', ${options.join(', ')} },\n`;
-      }
-      return `        "${propName}": { type: 'navigation', target: '${shortName}' },\n`;
-    }
-
-    // Primitive type
-    const edmType = resolvedType.startsWith('Edm.') ? resolvedType : `Edm.${resolvedType}`;
+  function generateTypeCode(type: string, nullable?: boolean): string {
+    const { name: resolvedType, isCollection } = resolveType(type);
     const options: string[] = [];
     if (isCollection) options.push('collection: true');
-    if (!nullable) options.push('nullable: false');
+    if (nullable === false) options.push('nullable: false');
+    const optionsSuffix = options.length > 0 ? `, ${options.join(', ')}` : '';
 
-    if (options.length > 0) {
-      return `        "${propName}": { type: '${edmType}', ${options.join(', ')} },\n`;
+    if (enumTypes.has(resolvedType)) {
+      return `{ type: 'enum', target: '${getShortName(resolvedType)}'${optionsSuffix} }`;
     }
-    return `        "${propName}": { type: '${edmType}' },\n`;
+
+    if (complexTypes.has(resolvedType)) {
+      return `{ type: 'complex', target: '${getShortName(resolvedType)}'${optionsSuffix} }`;
+    }
+
+    if (includedEntityTypes.has(resolvedType)) {
+      return `{ type: 'navigation', target: '${getShortName(resolvedType)}'${optionsSuffix} }`;
+    }
+
+    const edmType = resolvedType.startsWith('Edm.') ? resolvedType : `Edm.${resolvedType}`;
+    return `{ type: '${edmType}'${optionsSuffix} }`;
+  }
+
+  function generatePropertyCode(prop: CsdlProperty): string {
+    const propName = prop['@_Name'];
+    if (propName.startsWith('_')) return '';
+    return `        "${propName}": ${generateTypeCode(prop['@_Type'], prop['@_Nullable'] !== 'false')},\n`;
   }
 
   // Helper to generate navigation code
@@ -825,45 +788,6 @@ export async function generateSchema(configPath?: string): Promise<void> {
 
     const targetShortName = getShortName(navTargetFQN);
     return `        "${navName}": { type: 'navigation', target: '${targetShortName}', collection: ${isCollection} },\n`;
-  }
-
-  // Helper to generate parameter/return type code
-  function generateTypeCode(type: string): string {
-    const { name: resolvedType, isCollection } = resolveType(type);
-
-    // Check if enum
-    if (enumTypes.has(resolvedType)) {
-      const shortName = getShortName(resolvedType);
-      if (isCollection) {
-        return `{ type: 'enum', target: '${shortName}', collection: true }`;
-      }
-      return `{ type: 'enum', target: '${shortName}' }`;
-    }
-
-    // Check if complex type
-    if (complexTypes.has(resolvedType)) {
-      const shortName = getShortName(resolvedType);
-      if (isCollection) {
-        return `{ type: 'complex', target: '${shortName}', collection: true }`;
-      }
-      return `{ type: 'complex', target: '${shortName}' }`;
-    }
-
-    // Check if EntityType
-    if (includedEntityTypes.has(resolvedType)) {
-      const shortName = getShortName(resolvedType);
-      if (isCollection) {
-        return `{ type: 'navigation', target: '${shortName}', collection: true }`;
-      }
-      return `{ type: 'navigation', target: '${shortName}' }`;
-    }
-
-    // Primitive type
-    const edmType = resolvedType.startsWith('Edm.') ? resolvedType : `Edm.${resolvedType}`;
-    if (isCollection) {
-      return `{ type: '${edmType}', collection: true }`;
-    }
-    return `{ type: '${edmType}' }`;
   }
 
   // ------------------------------------------------------------------------
@@ -1242,7 +1166,7 @@ export async function generateSchema(configPath?: string): Promise<void> {
     if (entityType.Property) {
       for (const prop of entityType.Property) {
         if (isExcluded(prop['@_Name'], 'properties')) continue;
-        out += generatePropertyCode(prop, entityType.Key);
+        out += generatePropertyCode(prop);
       }
     }
 

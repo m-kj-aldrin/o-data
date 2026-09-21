@@ -6,19 +6,6 @@ import type { QueryableEntity, EntitySetToQueryableEntity } from './types';
 import type { Schema } from './schema';
 import { buildQueryableEntity } from './runtime.js';
 
-// Helper to resolve navigation target QueryableEntity from targetEntitysetKey
-type ResolveNavTarget<
-  S extends Schema<S>,
-  Nav extends { targetEntitysetKey: string | string[] }
-> = Nav['targetEntitysetKey'] extends infer TargetKey
-  ? TargetKey extends string
-    ? TargetKey extends keyof S['entitysets']
-      ? EntitySetToQueryableEntity<S, TargetKey>
-      : QueryableEntity
-    : QueryableEntity
-  : QueryableEntity;
-
-// Helper to extract target entityset key from navigation
 type NavTargetKey<TEntity extends QueryableEntity, N extends keyof TEntity['navigations']> = 
   TEntity['navigations'][N]['targetEntitysetKey'];
 
@@ -32,6 +19,19 @@ type ResolveNavTargetQE<
     ? EntitySetToQueryableEntity<S, NavTargetKey<TEntity, N>>
     : QueryableEntity
   : QueryableEntity;
+
+const COMPARISON_OPERATORS = new Set<string>([
+  'eq',
+  'ne',
+  'gt',
+  'ge',
+  'lt',
+  'le',
+  'contains',
+  'startswith',
+  'endswith',
+  'in',
+]);
 
 export type ComparisonOperator =
   | 'eq'
@@ -152,31 +152,17 @@ export function createFilterHelpers<TEntity extends QueryableEntity, S extends S
   const prependPathToState = (state: any[], prefix: string): any[] => {
     return state.map((item) => {
       if (Array.isArray(item)) {
-        // Check if it's a clause tuple [property, operator, value]
-        const ops = [
-          'eq',
-          'ne',
-          'gt',
-          'ge',
-          'lt',
-          'le',
-          'contains',
-          'startswith',
-          'endswith',
-          'in',
-        ];
         if (
           item.length === 3 &&
           typeof item[0] === 'string' &&
           typeof item[1] === 'string' &&
-          ops.includes(item[1])
+          COMPARISON_OPERATORS.has(item[1])
         ) {
           return [`${prefix}/${item[0]}`, item[1], item[2]];
         } else {
           return prependPathToState(item, prefix);
         }
       } else if (typeof item === 'object' && item !== null && item.kind === 'lambda') {
-        // Update lambda navigation path
         return { ...item, nav: `${prefix}/${item.nav}` };
       }
       return item;
@@ -198,7 +184,6 @@ export function createFilterHelpers<TEntity extends QueryableEntity, S extends S
     if (!schema) {
       throw new Error('Schema required for navigation filters');
     }
-    const targetEntitytypeName = navDef.target as string;
     const targetEntitysetKey = navDef.targetEntitysetKey;
     const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
     const innerHelpers = createFilterHelpers(targetEntity, schema);
@@ -211,7 +196,8 @@ export function createFilterHelpers<TEntity extends QueryableEntity, S extends S
     return new FilterBuilderImpl(scopedState);
   };
 
-  const any = <N extends CollectionNavKeys<TEntity>>(
+  const lambda = <N extends CollectionNavKeys<TEntity>>(
+    op: 'any' | 'all',
     nav: N,
     cb: (
       h: FilterHelpers<ResolveNavTargetQE<S, TEntity, N>, S>
@@ -224,46 +210,24 @@ export function createFilterHelpers<TEntity extends QueryableEntity, S extends S
     if (!schema) {
       throw new Error('Schema required for navigation filters');
     }
-    const targetEntitysetKey = navDef.targetEntitysetKey;
-    const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-    const innerHelpers = createFilterHelpers(targetEntity, schema);
-    const innerBuilder = cb(innerHelpers);
-    const lambdaState = {
-      kind: 'lambda',
-      op: 'any',
-      nav: nav as string,
-      predicate: (innerBuilder as FilterBuilderImpl<any>).state,
-    };
-    return new FilterBuilderImpl([lambdaState]);
+    const targetEntity = buildQueryableEntity(schema, navDef.targetEntitysetKey);
+    const innerBuilder = cb(createFilterHelpers(targetEntity, schema));
+    return new FilterBuilderImpl([
+      {
+        kind: 'lambda',
+        op,
+        nav: nav as string,
+        predicate: (innerBuilder as FilterBuilderImpl<any>).state,
+      },
+    ]);
   };
 
-  const all = <N extends CollectionNavKeys<TEntity>>(
-    nav: N,
-    cb: (
-      h: FilterHelpers<ResolveNavTargetQE<S, TEntity, N>, S>
-    ) => FilterBuilder<ResolveNavTargetQE<S, TEntity, N>>
-  ): FilterBuilder<TEntity> => {
-    const navDef = entityDef.navigations[nav as keyof typeof entityDef.navigations];
-    if (!navDef) {
-      throw new Error(`Navigation ${String(nav)} not found`);
-    }
-    if (!schema) {
-      throw new Error('Schema required for navigation filters');
-    }
-    const targetEntitysetKey = navDef.targetEntitysetKey;
-    const targetEntity = buildQueryableEntity(schema, targetEntitysetKey);
-    const innerHelpers = createFilterHelpers(targetEntity, schema);
-    const innerBuilder = cb(innerHelpers);
-    const lambdaState = {
-      kind: 'lambda',
-      op: 'all',
-      nav: nav as string,
-      predicate: (innerBuilder as FilterBuilderImpl<any>).state,
-    };
-    return new FilterBuilderImpl([lambdaState]);
+  return {
+    clause,
+    nav,
+    any: (navKey, cb) => lambda('any', navKey, cb),
+    all: (navKey, cb) => lambda('all', navKey, cb),
   };
-
-  return { clause, nav, any, all };
 }
 
 // ============================================================================
@@ -290,19 +254,7 @@ export function serializeFilter<S extends Schema<S> = Schema<any>>(
   ) {
     const lambda = filterState[0];
     const varName = lambdaVar || `p${depth}`;
-    let lambdaEntityDef: QueryableEntity | undefined;
-    if (entityDef && lambda.nav in entityDef.navigations) {
-      // For lambda navigation, we need to resolve the target entity
-      // The nav might be a path (e.g., A/B/C), so we take the first part
-      const firstPart = lambda.nav.split('/')[0];
-      const nav = entityDef.navigations[firstPart as keyof typeof entityDef.navigations];
-      if (nav) {
-        // At runtime, target is a string, but we don't have schema here
-        // We'll pass undefined and let serializeClause handle it
-        lambdaEntityDef = undefined;
-      }
-    }
-    const predicate = serializeFilter(lambda.predicate, depth + 1, varName, lambdaEntityDef, schema);
+    const predicate = serializeFilter(lambda.predicate, depth + 1, varName, undefined, schema);
     return `${lambda.nav}/${lambda.op}(${varName}:${predicate})`;
   }
 
